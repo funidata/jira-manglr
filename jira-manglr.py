@@ -141,7 +141,7 @@ class App:
             i = input_counts[tag]
             o = output_counts[tag]
 
-            log.info("\t%s: %6d/%6d = %.2f", i, o, i/o*100)
+            log.info("\t%s: %6d/%6d = %.2f", tag, o, i, o/i*100)
 
     def scan(self, file):
         for e in self.parse(file):
