@@ -58,23 +58,21 @@ class App:
                 yield e
                 e.clear()
 
+    def filter_attr_set(self, e, attr, set):
+        if e.get(attr) in set:
+            log.info("KEEP %s %s", e.tag, e.get(attr))
+            return e
+        else:
+            log.info("DROP %s %s", e.tag, e.get(attr))
+            return None
+
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
         elif e.tag == 'User':
-            if e.get('userName') in self.project_users:
-                log.info("KEEP User %s", e.get('userName'))
-                return e
-            else:
-                log.info("DROP User %s", e.get('userName'))
-                return None
+            return self.filter_attr_set(e, 'userName', self.project_users)
         elif e.tag == 'ApplicationUser':
-            if e.get('userKey') in self.project_users:
-                log.info("KEEP ApplicationUser %s", e.get('userKey'))
-                return e
-            else:
-                log.info("DROP ApplicationUser %s", e.get('userKey'))
-                return None
+            return self.filter_attr_set(e, 'userKey', self.project_users)
         else:
             return e
 
@@ -135,13 +133,13 @@ class App:
                 output.write('\n')
                 output.write(root_close + '\n')
 
-        log.info("Stats: %d/%d items = %.2f", output_count, input_count, output_count/input_count*100)
+        log.info("Stats: %d/%d items = %.2f%%", output_count, input_count, output_count/input_count*100)
 
         for tag in input_counts:
             i = input_counts[tag]
             o = output_counts[tag]
 
-            log.info("\t%s: %6d/%6d = %.2f", tag, o, i, o/i*100)
+            log.info("\t%30s: %6d/%6d = %.2f%%", tag, o, i, o/i*100)
 
     def scan(self, file):
         for e in self.parse(file):
