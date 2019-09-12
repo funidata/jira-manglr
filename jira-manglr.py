@@ -16,8 +16,8 @@ Mangle Jira imports
 
 def split_xml_root(e):
     # output root element open
-    xml = ET.tostring(e, short_empty_elements=False, encoding='unicode')
-    xml_open, xml_close1, xml_close2 = xml.partition('</')
+    xml = ET.tostring(e, short_empty_elements=False)
+    xml_open, xml_close1, xml_close2 = xml.partition(b'</')
 
     return xml_open, xml_close1 + xml_close2
 
@@ -98,10 +98,16 @@ class App:
             log.debug("%2d %10s %s", level, event, e.tag)
 
             if level == 1 and event == 'start':
-                # output root element open
-                root_open, root_close = split_xml_root(e)
+                # clone just the top-level element
+                root = ET.Element(e.tag, e.attrib)
+                root.text = e.text
 
-                output.write(root_open + '\n')
+                # output root element open
+                root_open, root_close = split_xml_root(root)
+
+                log.debug("ROOT %s => %s + %s", e, root_open, root_close)
+
+                output.write(root_open)
 
             elif level == 2 and event == 'start':
                 input_count += 1
@@ -122,16 +128,14 @@ class App:
                     output_count += 1
                     output_counts[e.tag] += 1
 
-                    #output.write('\t')
-                    ET.ElementTree(e).write(output, xml_declaration=False, encoding='unicode')
-                    #output.write('\n')
+                    ET.ElementTree(e).write(output, xml_declaration=False)
 
                 ref.clear()
 
             elif level == 0 and event == 'end':
                 # output root element close
-                output.write('\n')
-                output.write(root_close + '\n')
+                output.write(b'\n')
+                output.write(root_close + b'\n')
 
         log.info("Stats: %d/%d items = %.2f%%", output_count, input_count, output_count/input_count*100)
 
@@ -182,7 +186,7 @@ def main():
     parser.add_argument('--debug', action='store_const', dest='log_level', const=logging.DEBUG, help="Log debug messages")
 
     parser.add_argument('--input', required=True) # must be a re-openable path, not a File or sys.stdin
-    parser.add_argument('--output', type=argparse.FileType('w'), default=sys.stdout)
+    parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
 
