@@ -73,6 +73,8 @@ class App:
             return self.filter_attr_set(e, 'userName', self.project_users)
         elif e.tag == 'ApplicationUser':
             return self.filter_attr_set(e, 'userKey', self.project_users)
+        elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
+            return self.filter_attr_set(e, 'childName', self.project_users)
         else:
             return e
 
