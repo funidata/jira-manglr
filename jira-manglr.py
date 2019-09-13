@@ -84,11 +84,16 @@ class App:
                 e.clear()
 
     def filter_attr_set(self, e, attr, set):
-        if e.get(attr) in set:
-            log.info("KEEP %s %s", e.tag, e.get(attr))
+        value = e.get(attr)
+
+        if not value:
+            log.info("KEEP %s (no attr)", e.tag)
+            return e
+        elif value in set:
+            log.info("KEEP %s %s", e.tag, value)
             return e
         else:
-            log.info("DROP %s %s", e.tag, e.get(attr))
+            log.info("DROP %s %s", e.tag, value)
             return None
 
     def filter(self, e):
