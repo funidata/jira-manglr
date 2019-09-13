@@ -199,6 +199,10 @@ class App:
                     self.project_users.add(roletypeparameter)
 
     def verify(self, file):
+        """
+            Log any tags having attributes with dropped usernames
+        """
+
         reject_users = self.all_users - self.keep_users
 
         for e in self.parse(file):
@@ -223,7 +227,7 @@ def main():
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
     parser.add_argument('--keep-users', metavar='PATH', help="List of additional users to keep")
-    parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
     parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
 
     args = parser.parse_args()
