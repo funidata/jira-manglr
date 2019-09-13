@@ -5,6 +5,7 @@ import collections
 import json
 import logging
 import sys
+import yaml
 
 import xml.etree.ElementTree as ET
 
@@ -22,20 +23,33 @@ def split_xml_root(e):
     return xml_open, xml_close1 + xml_close2
 
 class App:
-    def __init__(self):
+    def __init__(self, keep_users=None, rewrite_directories=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
+        self.internal_directory_id = None
+        self.remap_directory_id = None
+
         self.keep_users = set()
+        self.keep_directories = set()
+        self.rewrite_directories = {}
+
+        if keep_users:
+            self.keep_users = keep_users
+
+        if rewrite_directories:
+            self.keep_directories = {str(id) for id in rewrite_directories.values()}
+            self.rewrite_directories = {str(k): str(v) for k, v in rewrite_directories.items()}
 
     def save_state(self):
         return {
             'element_count': self.element_count,
             'all_users': list(self.all_users),
             'project_users': list(self.project_users),
+            'internal_directory_id': self.internal_directory_id,
         }
 
-    def load_state(self, state, keep_users=None):
+    def load_state(self, state, keep_project_users=True):
         self.element_count = state['element_count']
 
         if 'project_role_actor_users' in state:
@@ -46,10 +60,11 @@ class App:
         if 'all_users' in state:
             self.all_users = set(state['all_users'])
 
-        if keep_users:
-            self.keep_users = keep_users | self.project_users
-        else:
-            self.keep_users = self.project_users
+        if 'internal_directory_id' in state:
+            self.internal_directory_id = state['internal_directory_id']
+
+        if keep_project_users:
+            self.keep_users |= self.project_users
 
     def parse(self, file, count_interval=10000):
         """
@@ -83,59 +98,86 @@ class App:
                 yield e
                 e.clear()
 
-    def filter_attr_set(self, e, attr, set):
-        value = e.get(attr)
+    def filter_attr_set(self, e, attrs, rewrite=None):
+        """
+            attrs   - { attr: set(values) }
+        """
 
-        if not value:
-            log.info("KEEP %s (no attr)", e.tag)
-            return e
-        elif value in set:
-            log.info("KEEP %s %s", e.tag, value)
-            return e
-        else:
-            log.info("DROP %s %s", e.tag, value)
+        values = {attr: e.get(attr) for attr in attrs}
+
+        if any((e.get(attr) not in attrs[attr]) for attr in attrs):
+            log.info("DROP %s %s", e.tag, values)
             return None
+
+        if rewrite:
+            for attr, map in rewrite.items():
+                old = e.get(attr)
+                new = map.get(old)
+
+                if not new:
+                    log.info("DROP %s rewrite:%s=%s", e.tag, attr, old)
+                    return None
+                else:
+                    log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
+                    e.set(attr, new)
+
+        log.info("KEEP %s %s", e.tag, values)
+        return e
 
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
         elif e.tag in ('OAuthServiceProviderToken', ):
             return None
-        elif e.tag == 'Avatar' and e.get('avatarType') == 'user':
-            return self.filter_attr_set(e, 'owner', self.keep_users)
+        elif e.tag == 'Avatar' and e.get('avatarType') == 'user' and e.get('owner'):
+            return self.filter_attr_set(e, {'owner': self.keep_users})
         elif e.tag == 'User':
-            return self.filter_attr_set(e, 'userName', self.keep_users)
+            return self.filter_attr_set(e, {'userName': self.keep_users},
+                rewrite = {'directoryId': self.rewrite_directories},
+            )
         elif e.tag == 'ApplicationUser':
-            return self.filter_attr_set(e, 'userKey', self.keep_users)
+            return self.filter_attr_set(e,  {'userKey': self.keep_users})
+        elif e.tag == 'Group':
+            return self.filter_attr_set(e, {}, # TODO
+                rewrite = {'directoryId': self.rewrite_directories},
+            )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return self.filter_attr_set(e, 'childName', self.keep_users)
+            return self.filter_attr_set(e, {'childName': self.keep_users},
+                rewrite = {'directoryId': self.rewrite_directories},
+            )
         elif e.tag == 'UserHistoryItem':
-            return self.filter_attr_set(e, 'username', self.keep_users)
+            return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'SearchRequest':
-            return self.filter_attr_set(e, 'author', self.keep_users)
+            return self.filter_attr_set(e, {'author': self.keep_users})
         elif e.tag == 'RememberMeToken':
-            return self.filter_attr_set(e, 'username', self.keep_users)
-        elif e.tag == 'PortalPage':
-            return self.filter_attr_set(e, 'username', self.keep_users)
-        elif e.tag == 'ColumnLayout':
-            return self.filter_attr_set(e, 'username', self.keep_users)
+            return self.filter_attr_set(e, {'username': self.keep_users})
+        elif e.tag == 'PortalPage' and e.get('username'):
+            return self.filter_attr_set(e, {'username': self.keep_users})
+        elif e.tag == 'ColumnLayout' and e.get('username'):
+            return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'ExternalEntity':
             # TODO: drop all?
-            return self.filter_attr_set(e, 'name', self.keep_users)
+            return self.filter_attr_set(e, {'name': self.keep_users})
         elif e.tag == 'FavouriteAssociations':
-            return self.filter_attr_set(e, 'username', self.keep_users)
-        elif e.tag == 'Feature':
-            return self.filter_attr_set(e, 'userKey', self.keep_users)
+            return self.filter_attr_set(e, {'username': self.keep_users})
+        elif e.tag == 'Feature' and e.get('featureType') == 'user':
+            return self.filter_attr_set(e, {'userKey': self.keep_users})
         elif e.tag == 'FilterSubscription':
-            return self.filter_attr_set(e, 'username', self.keep_users)
+            return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'Notification' and e.get('type') == 'Single_User':
-            return self.filter_attr_set(e, 'parameter', self.keep_users)
+            return self.filter_attr_set(e, {'parameter': self.keep_users})
         elif e.tag == 'SchemePermissions' and e.get('type') == 'user':
-            return self.filter_attr_set(e, 'parameter', self.keep_users)
-        elif e.tag == 'OSHistoryStep':
-            return self.filter_attr_set(e, 'caller', self.keep_users)
+            return self.filter_attr_set(e, {'parameter': self.keep_users})
+        elif e.tag == 'OSHistoryStep' and e.get('caller'):
+            return self.filter_attr_set(e, {'caller': self.keep_users})
+        elif e.tag == 'Directory':
+            return self.filter_attr_set(e, {'id': self.keep_directories})
+        elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
+            return self.filter_attr_set(e, {'directoryId': self.keep_directories})
         else:
             return e
+
+
 
     def process(self, input, output, count_interval=10000):
         """
@@ -210,10 +252,13 @@ class App:
         for e in self.parse(file):
             self.element_count += 1
 
+            if e.tag == 'Directory' and e.get('type') == 'INTERNAL':
+                self.internal_directory_id = e.get('id')
+
             if e.tag == 'User':
                 self.all_users.add(e.get('userName'))
 
-            if e.tag == 'ProjectRoleActor':
+            elif e.tag == 'ProjectRoleActor':
                 roletype = e.get('roletype')
                 roletypeparameter = e.get('roletypeparameter')
 
@@ -268,6 +313,7 @@ def main():
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
     parser.add_argument('--keep-users', metavar='PATH', help="List of additional users to keep")
+    parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
     parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
     parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
 
@@ -279,17 +325,25 @@ def main():
         format      = "%(asctime)s %(levelname)5s %(module)s: %(message)s",
     )
 
+    keep_users = None
+    keep_directories = None
+
     if args.keep_users:
         with open(args.keep_users) as file:
             keep_users = set(l.strip() for l in file if l.strip())
-    else:
-        keep_users = set()
 
-    app = App()
+    if args.rewrite_directories:
+        with open(args.rewrite_directories) as file:
+            rewrite_directories = yaml.safe_load(file)
+
+    app = App(
+        keep_users = keep_users,
+        rewrite_directories = rewrite_directories,
+    )
 
     if args.load_state:
         with open(args.load_state, 'r') as file:
-            app.load_state(json.load(file), keep_users=keep_users)
+            app.load_state(json.load(file))
     else:
         app.scan(args.input)
 
