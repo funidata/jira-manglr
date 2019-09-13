@@ -221,11 +221,28 @@ class App:
 
         reject_users = self.all_users - self.keep_users
 
+        total_count = 0
+        total_counts = collections.defaultdict(int)
+        count = 0
+        counts = collections.defaultdict(int)
+
         for e in self.parse(file):
+            total_count += 1
+            total_counts[e.tag] += 1
+
             attrs = {k: v for k, v in e.attrib.items() if v in reject_users}
 
             if attrs:
                 log.warn("USER %s %s", e.tag, ', '.join(f'{k}<{v}>' for k, v in attrs.items()))
+
+                count += 1
+                counts[e.tag] += 1
+
+        log.info("Summary: %d/%d = %.2f%% items", count, total_count, count/total_count*100)
+
+        for tag in counts:
+            log.info("\t%-30s: %8d/%8d = %.2f%%", tag, counts[tag], total_counts[tag], counts[tag]/total_counts[tag]*100)
+
 
 def main():
     parser = argparse.ArgumentParser(
