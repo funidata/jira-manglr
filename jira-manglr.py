@@ -24,6 +24,7 @@ def split_xml_root(e):
 class App:
     def __init__(self):
         self.element_count = 0
+        self.all_users = set()
         self.project_users = set()
 
     def parse(self, file, count_interval=10000):
@@ -151,6 +152,9 @@ class App:
         for e in self.parse(file):
             self.element_count += 1
 
+            if e.tag == 'User':
+                self.all_users.add(e.get('userName'))
+
             if e.tag == 'ProjectRoleActor':
                 roletype = e.get('roletype')
                 roletypeparameter = e.get('roletypeparameter')
@@ -160,9 +164,19 @@ class App:
 
                     self.project_users.add(roletypeparameter)
 
+    def verify(self, file):
+        reject_users = self.all_users - self.project_users
+
+        for e in self.parse(file):
+            attrs = {k: v for k, v in e.attrib.items() if v in reject_users}
+
+            if attrs:
+                log.warn("USER %s %s", e.tag, ', '.join(f'{k}={v}' for k, v in attrs.items()))
+
     def save_state(self):
         return {
             'element_count': self.element_count,
+            'all_users': list(self.all_users),
             'project_users': list(self.project_users),
         }
 
@@ -174,6 +188,8 @@ class App:
         else:
             self.project_users = set(state['project_users'])
 
+        if 'all_users' in state:
+            self.all_users = set(state['all_users'])
 
 def main():
     parser = argparse.ArgumentParser(
@@ -188,9 +204,10 @@ def main():
     parser.add_argument('--debug', action='store_const', dest='log_level', const=logging.DEBUG, help="Log debug messages")
 
     parser.add_argument('--input', required=True) # must be a re-openable path, not a File or sys.stdin
-    parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
+    parser.add_argument('--verify', action='store_true')
+    parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
 
     args = parser.parse_args()
 
@@ -211,6 +228,8 @@ def main():
     if args.save_state:
         with open(args.save_state, 'w') as file:
             json.dump(app.save_state(), file)
+    elif args.verify:
+        app.verify(args.input)
     else:
         app.process(args.input, args.output)
 
