@@ -145,6 +145,10 @@ class App:
             return self.filter_attr_set(e, {'childName': self.keep_users},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
+        elif e.tag == 'UserAttribute':
+            return self.filter_attr_set(e, {},
+                rewrite = {'directoryId': self.rewrite_directories},
+            )
         elif e.tag == 'UserHistoryItem':
             return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'SearchRequest':
