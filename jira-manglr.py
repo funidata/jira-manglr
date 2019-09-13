@@ -102,6 +102,14 @@ class App:
             return self.filter_attr_set(e, 'userKey', self.keep_users)
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
             return self.filter_attr_set(e, 'childName', self.keep_users)
+        elif e.tag == 'UserHistoryItem':
+            return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'SearchRequest':
+            return self.filter_attr_set(e, 'author', self.keep_users)
+        elif e.tag == 'RememberMeToken':
+            return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'PortalPage':
+            return self.filter_attr_set(e, 'username', self.keep_users)
         else:
             return e
 
