@@ -23,7 +23,7 @@ def split_xml_root(e):
     return xml_open, xml_close1 + xml_close2
 
 class App:
-    def __init__(self, keep_users=None, rewrite_directories=None):
+    def __init__(self, keep_users=None, drop_users=None, keep_groups=None, rewrite_directories=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
@@ -31,11 +31,18 @@ class App:
         self.remap_directory_id = None
 
         self.keep_users = set()
+        self.drop_users = set()
+        self.keep_groups = set()
         self.keep_directories = set()
         self.rewrite_directories = {}
 
         if keep_users:
-            self.keep_users = keep_users
+            self.keep_users = set(keep_users)
+        if drop_users:
+            self.drop_users = set(drop_users)
+
+        if keep_groups:
+            self.keep_groups = set(keep_groups)
 
         if rewrite_directories:
             self.keep_directories = {str(id) for id in rewrite_directories.values()}
@@ -65,6 +72,7 @@ class App:
 
         if keep_project_users:
             self.keep_users |= self.project_users
+            self.keep_users -= self.drop_users
 
     def parse(self, file, count_interval=10000):
         """
@@ -138,11 +146,11 @@ class App:
         elif e.tag == 'ApplicationUser':
             return self.filter_attr_set(e,  {'userKey': self.keep_users})
         elif e.tag == 'Group':
-            return self.filter_attr_set(e, {}, # TODO
+            return self.filter_attr_set(e, {'groupName': self.keep_groups},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return self.filter_attr_set(e, {'childName': self.keep_users},
+            return self.filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserAttribute':
@@ -316,7 +324,9 @@ def main():
     parser.add_argument('--input', required=True) # must be a re-openable path, not a File or sys.stdin
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
-    parser.add_argument('--keep-users', metavar='PATH', help="List of additional users to keep")
+    parser.add_argument('--keep-users', metavar='PATH', help="YAML list of users to keep")
+    parser.add_argument('--drop-users', metavar='PATH', help="YAML list of users to drop")
+    parser.add_argument('--keep-groups', metavar='PATH', help="YAML list of groups to keep")
     parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
     parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
     parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
@@ -330,18 +340,30 @@ def main():
     )
 
     keep_users = None
+    drop_users = None
     keep_directories = None
+    keep_groups = None
 
     if args.keep_users:
         with open(args.keep_users) as file:
-            keep_users = set(l.strip() for l in file if l.strip())
+            keep_users = yaml.safe_load(file)
+
+    if args.drop_users:
+        with open(args.drop_users) as file:
+            drop_users = yaml.safe_load(file)
 
     if args.rewrite_directories:
         with open(args.rewrite_directories) as file:
             rewrite_directories = yaml.safe_load(file)
 
+    if args.keep_groups:
+        with open(args.keep_groups) as file:
+            keep_groups = yaml.safe_load(file)
+
     app = App(
         keep_users = keep_users,
+        drop_users = drop_users,
+        keep_groups = keep_groups,
         rewrite_directories = rewrite_directories,
     )
 
