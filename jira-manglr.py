@@ -110,6 +110,17 @@ class App:
             return self.filter_attr_set(e, 'username', self.keep_users)
         elif e.tag == 'PortalPage':
             return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'ColumnLayout':
+            return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'ExternalEntity':
+            # TODO: drop all?
+            return self.filter_attr_set(e, 'name', self.keep_users)
+        elif e.tag == 'FavouriteAssociations':
+            return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'Feature':
+            return self.filter_attr_set(e, 'userKey', self.keep_users)
+        elif e.tag == 'FilterSubscription':
+            return self.filter_attr_set(e, 'username', self.keep_users)
         else:
             return e
 
