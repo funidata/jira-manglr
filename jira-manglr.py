@@ -99,6 +99,8 @@ class App:
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
+        elif e.tag in ('OAuthServiceProviderToken', ):
+            return None
         elif e.tag == 'Avatar' and e.get('avatarType') == 'user':
             return self.filter_attr_set(e, 'owner', self.keep_users)
         elif e.tag == 'User':
@@ -126,6 +128,12 @@ class App:
             return self.filter_attr_set(e, 'userKey', self.keep_users)
         elif e.tag == 'FilterSubscription':
             return self.filter_attr_set(e, 'username', self.keep_users)
+        elif e.tag == 'Notification' and e.get('type') == 'Single_User':
+            return self.filter_attr_set(e, 'parameter', self.keep_users)
+        elif e.tag == 'SchemePermissions' and e.get('type') == 'user':
+            return self.filter_attr_set(e, 'parameter', self.keep_users)
+        elif e.tag == 'OSHistoryStep':
+            return self.filter_attr_set(e, 'caller', self.keep_users)
         else:
             return e
 
