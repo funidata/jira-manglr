@@ -26,6 +26,30 @@ class App:
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
+        self.keep_users = set()
+
+    def save_state(self):
+        return {
+            'element_count': self.element_count,
+            'all_users': list(self.all_users),
+            'project_users': list(self.project_users),
+        }
+
+    def load_state(self, state, keep_users=None):
+        self.element_count = state['element_count']
+
+        if 'project_role_actor_users' in state:
+            self.project_users = set(state['project_role_actor_users'])
+        else:
+            self.project_users = set(state['project_users'])
+
+        if 'all_users' in state:
+            self.all_users = set(state['all_users'])
+
+        if keep_users:
+            self.keep_users = keep_users | self.project_users
+        else:
+            self.keep_users = self.project_users
 
     def parse(self, file, count_interval=10000):
         """
@@ -70,12 +94,14 @@ class App:
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
+        elif e.tag == 'Avatar' and e.get('avatarType') == 'user':
+            return self.filter_attr_set(e, 'owner', self.keep_users)
         elif e.tag == 'User':
-            return self.filter_attr_set(e, 'userName', self.project_users)
+            return self.filter_attr_set(e, 'userName', self.keep_users)
         elif e.tag == 'ApplicationUser':
-            return self.filter_attr_set(e, 'userKey', self.project_users)
+            return self.filter_attr_set(e, 'userKey', self.keep_users)
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return self.filter_attr_set(e, 'childName', self.project_users)
+            return self.filter_attr_set(e, 'childName', self.keep_users)
         else:
             return e
 
@@ -165,31 +191,13 @@ class App:
                     self.project_users.add(roletypeparameter)
 
     def verify(self, file):
-        reject_users = self.all_users - self.project_users
+        reject_users = self.all_users - self.keep_users
 
         for e in self.parse(file):
             attrs = {k: v for k, v in e.attrib.items() if v in reject_users}
 
             if attrs:
-                log.warn("USER %s %s", e.tag, ', '.join(f'{k}={v}' for k, v in attrs.items()))
-
-    def save_state(self):
-        return {
-            'element_count': self.element_count,
-            'all_users': list(self.all_users),
-            'project_users': list(self.project_users),
-        }
-
-    def load_state(self, state):
-        self.element_count = state['element_count']
-
-        if 'project_role_actor_users' in state:
-            self.project_users = set(state['project_role_actor_users'])
-        else:
-            self.project_users = set(state['project_users'])
-
-        if 'all_users' in state:
-            self.all_users = set(state['all_users'])
+                log.warn("USER %s %s", e.tag, ', '.join(f'{k}<{v}>' for k, v in attrs.items()))
 
 def main():
     parser = argparse.ArgumentParser(
@@ -206,6 +214,7 @@ def main():
     parser.add_argument('--input', required=True) # must be a re-openable path, not a File or sys.stdin
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
+    parser.add_argument('--keep-users', metavar='PATH', help="List of additional users to keep")
     parser.add_argument('--verify', action='store_true')
     parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
 
@@ -217,11 +226,17 @@ def main():
         format      = "%(asctime)s %(levelname)5s %(module)s: %(message)s",
     )
 
+    if args.keep_users:
+        with open(args.keep_users) as file:
+            keep_users = set(l.strip() for l in file if l.strip())
+    else:
+        keep_users = set()
+
     app = App()
 
     if args.load_state:
         with open(args.load_state, 'r') as file:
-            app.load_state(json.load(file))
+            app.load_state(json.load(file), keep_users=keep_users)
     else:
         app.scan(args.input)
 
