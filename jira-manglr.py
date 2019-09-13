@@ -161,6 +161,8 @@ class App:
             return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'SearchRequest':
             return self.filter_attr_set(e, {'author': self.keep_users})
+        elif e.tag == 'SharePermissions' and e.get('type') == 'group':
+            return self.filter_attr_set(e, {'param1': self.keep_groups})
         elif e.tag == 'RememberMeToken':
             return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'PortalPage' and e.get('username'):
@@ -180,6 +182,8 @@ class App:
             return self.filter_attr_set(e, {'parameter': self.keep_users})
         elif e.tag == 'SchemePermissions' and e.get('type') == 'user':
             return self.filter_attr_set(e, {'parameter': self.keep_users})
+        elif e.tag == 'SchemePermissions' and e.get('type') == 'group':
+            return self.filter_attr_set(e, {'parameter': self.keep_groups})
         elif e.tag == 'OSHistoryStep' and e.get('caller'):
             return self.filter_attr_set(e, {'caller': self.keep_users})
         elif e.tag == 'Directory':
