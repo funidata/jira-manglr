@@ -347,6 +347,8 @@ class EntityMangler:
             return filter_attr_set(e, {'id': self.keep_directories})
         elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
             return filter_attr_set(e, {'directoryId': self.keep_directories})
+        elif e.tag == 'MailServer':
+            return None
         else:
             return e
 
