@@ -405,18 +405,59 @@ class EntityMangler:
         for tag in counts:
             log.info("\t%-30s: %8d/%8d = %.2f%%", tag, counts[tag], total_counts[tag], counts[tag]/total_counts[tag]*100)
 
+def rewrite_data_rows(e, match, rewrite={}):
+    table = e.get('tableName')
+    cols = []
+
+    for c in e.iterfind('{http://www.atlassian.com/ao}column'):
+        cols.append(c.get('name'))
+
+    log.debug("SCAN %s %r", table, cols)
+
+    for row in e.iterfind('{http://www.atlassian.com/ao}row'):
+        elements = {}
+
+        for c, item in zip(cols, row):
+            elements[c] = item
+
+        if any(elements[c].text != v for c, v in match.items()):
+            log.debug("SKIP %s %s", table, {c: e.text for c, e in elements.items() if c in match})
+            continue
+
+        for attr, map in rewrite.items():
+            old = elements[attr].text
+            new = map.get(old)
+
+            if new:
+                log.info("REWRITE %s %s=%s => %s", table, attr, old, new)
+                elements[attr].text = new
+
+    return e
+
 class ActiveObjectMangler:
     XMLNS = 'http://www.atlassian.com/ao'
     DATA = '{http://www.atlassian.com/ao}data'
 
-    def __init__(self, clear_tables=None):
+    def __init__(self, clear_tables=None, rewrite_users=None):
         self.clear_tables = []
+        self.rewrite_users = None
 
         if clear_tables:
             self.clear_tables = list(clear_tables)
 
+        if rewrite_users:
+            self.rewrite_users = dict(rewrite_users)
+
     def filter(self, e):
-        if e.tag == self.DATA:
+        if e.tag == self.DATA and e.get('tableName') == 'AO_60DB71_BOARDADMINS':
+            return rewrite_data_rows(e, {'TYPE': 'USER'}, {'KEY': self.rewrite_users})
+        elif e.tag == self.DATA and e.get('tableName') == 'AO_60DB71_AUDITENTRY':
+            return rewrite_data_rows(e, {}, {'USER': self.rewrite_users})
+        elif e.tag == self.DATA and e.get('tableName') == 'AO_60DB71_RAPIDVIEW':
+            return rewrite_data_rows(e, {}, {'OWNER_USER_NAME': self.rewrite_users})
+        elif e.tag == self.DATA and e.get('tableName') == 'AO_8BAD1B_STATISTICS':
+            return rewrite_data_rows(e, {}, {'C_USERKEY': self.rewrite_users})
+        elif e.tag == self.DATA:
             return filter_attr_glob(e, 'tableName', self.clear_tables)
         else:
             return e
@@ -529,6 +570,7 @@ def main():
 
         app = ActiveObjectMangler(
             clear_tables = clear_tables,
+            rewrite_users = rewrite_users,
         )
 
         if args.output_activeobjects:
