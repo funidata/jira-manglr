@@ -345,7 +345,7 @@ def main():
 
     keep_users = None
     drop_users = None
-    keep_directories = None
+    rewrite_directories = None
     keep_groups = None
 
     if args.keep_users:
