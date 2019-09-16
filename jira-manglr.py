@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import fnmatch
 import json
 import logging
 import sys
@@ -23,7 +24,7 @@ def split_xml_root(e):
     return xml_open, xml_close1 + xml_close2
 
 class App:
-    def __init__(self, keep_users=None, drop_users=None, keep_groups=None, rewrite_directories=None):
+    def __init__(self, keep_users=None, drop_users=None, keep_groups=None, rewrite_directories=None, drop_osproperty=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
@@ -35,6 +36,7 @@ class App:
         self.keep_groups = set()
         self.keep_directories = set()
         self.rewrite_directories = {}
+        self.drop_osproperty = []
 
         if keep_users:
             self.keep_users = set(keep_users)
@@ -47,6 +49,9 @@ class App:
         if rewrite_directories:
             self.keep_directories = {str(id) for id in rewrite_directories.values()}
             self.rewrite_directories = {str(k): str(v) for k, v in rewrite_directories.items()}
+
+        if drop_osproperty:
+            self.drop_osproperty = list(drop_osproperty)
 
     def save_state(self):
         return {
@@ -132,6 +137,16 @@ class App:
         log.info("KEEP %s %s", e.tag, values)
         return e
 
+    def filter_attr_glob(self, e, attr, globs):
+        value = e.get(attr)
+
+        if any(fnmatch.fnmatch(value, pattern) for pattern in globs):
+            log.info("DROP %s %s=%s", e.tag, attr, value)
+            return None
+        else:
+            log.debug("KEEP %s %s=%s", e.tag, attr, value)
+            return e
+
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
@@ -165,6 +180,10 @@ class App:
             return self.filter_attr_set(e, {'param1': self.keep_groups})
         elif e.tag == 'RememberMeToken':
             return self.filter_attr_set(e, {'username': self.keep_users})
+        elif e.tag == 'UserAssociation':
+            return self.filter_attr_set(e, {'sourceName': self.keep_users})
+        elif e.tag == 'ProjectRoleActor' and e.get('roletype') == 'atlassian-user-role-actor':
+            return self.filter_attr_set(e, {'roletypeparameter': self.keep_users})
         elif e.tag == 'PortalPage' and e.get('username'):
             return self.filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'ColumnLayout' and e.get('username'):
@@ -186,14 +205,14 @@ class App:
             return self.filter_attr_set(e, {'parameter': self.keep_groups})
         elif e.tag == 'OSHistoryStep' and e.get('caller'):
             return self.filter_attr_set(e, {'caller': self.keep_users})
+        elif e.tag == 'OSPropertyEntry' and self.drop_osproperty:
+            return self.filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
         elif e.tag == 'Directory':
             return self.filter_attr_set(e, {'id': self.keep_directories})
         elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
             return self.filter_attr_set(e, {'directoryId': self.keep_directories})
         else:
             return e
-
-
 
     def process(self, input, output, count_interval=10000):
         """
@@ -332,6 +351,7 @@ def main():
     parser.add_argument('--drop-users', metavar='PATH', help="YAML list of users to drop")
     parser.add_argument('--keep-groups', metavar='PATH', help="YAML list of groups to keep")
     parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
+    parser.add_argument('--drop-osproperty', metavar='PATH', help="YAML list of OSProperty key globs to drop")
     parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
     parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
 
@@ -347,6 +367,7 @@ def main():
     drop_users = None
     rewrite_directories = None
     keep_groups = None
+    drop_osproperty = None
 
     if args.keep_users:
         with open(args.keep_users) as file:
@@ -364,11 +385,16 @@ def main():
         with open(args.keep_groups) as file:
             keep_groups = yaml.safe_load(file)
 
+    if args.drop_osproperty:
+        with open(args.drop_osproperty) as file:
+            drop_osproperty = yaml.safe_load(file)
+
     app = App(
         keep_users = keep_users,
         drop_users = drop_users,
         keep_groups = keep_groups,
         rewrite_directories = rewrite_directories,
+        drop_osproperty = drop_osproperty,
     )
 
     if args.load_state:
