@@ -124,15 +124,13 @@ class App:
 
         if rewrite:
             for attr, map in rewrite.items():
-                old = e.get(attr)
-                new = map.get(old)
+                if map is not None:
+                    old = e.get(attr)
+                    new = map.get(old)
 
-                if not new:
-                    log.info("DROP %s rewrite:%s=%s", e.tag, attr, old)
-                    return None
-                else:
-                    log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
-                    e.set(attr, new)
+                    if new:
+                        log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
+                        e.set(attr, new)
 
         log.info("KEEP %s %s", e.tag, values)
         return e
@@ -155,21 +153,24 @@ class App:
         elif e.tag == 'Avatar' and e.get('avatarType') == 'user' and e.get('owner'):
             return self.filter_attr_set(e, {'owner': self.keep_users})
         elif e.tag == 'User':
-            return self.filter_attr_set(e, {'userName': self.keep_users},
+            return self.filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'ApplicationUser':
-            return self.filter_attr_set(e,  {'userKey': self.keep_users})
+            return self.filter_attr_set(e,  {'userKey': self.keep_users}, rewrite={
+                'userKey': self.rewrite_users,
+                'lowerUserName': self.rewrite_users,
+            })
         elif e.tag == 'Group':
-            return self.filter_attr_set(e, {'groupName': self.keep_groups},
+            return self.filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return self.filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups},
+            return self.filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserAttribute':
-            return self.filter_attr_set(e, {},
+            return self.filter_attr_set(e, {'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserHistoryItem':
