@@ -3,6 +3,7 @@
 import argparse
 import collections
 import fnmatch
+import io
 import json
 import logging
 import sys
@@ -16,14 +17,166 @@ __doc__ = """
 Mangle Jira imports
 """
 
-def split_xml_root(e):
+def split_xml_root(e, default_namespace=None):
+    out = io.BytesIO()
+
     # output root element open
-    xml = ET.tostring(e, short_empty_elements=False)
+    et = ET.ElementTree(e)
+    et.write(out,
+        short_empty_elements = False,
+        xml_declaration = True,
+        default_namespace = default_namespace,
+    )
+
+    xml = out.getvalue()
     xml_open, xml_close1, xml_close2 = xml.partition(b'</')
 
     return xml_open, xml_close1 + xml_close2
 
-class App:
+def parse_xml(file, count_interval=10000):
+    """
+        Iterate over all top-level elements
+    """
+
+    count = 0
+    root = None
+    level = 0
+
+    for event, e in ET.iterparse(file, events=['start', 'end']):
+        if event == 'start':
+            level += 1
+        elif event == 'end':
+            level -= 1
+
+        log.debug("%2d %10s %s", level, event, e.tag)
+
+        if level == 1 and event == 'start':
+            # process root element
+            root = e
+
+        elif level == 2 and event == 'start':
+            count += 1
+
+            if count % count_interval == 0:
+                log.info("Processing %d elements...", count)
+
+        elif level == 1 and event == 'end':
+            # process each top-level element
+            yield e
+            e.clear()
+
+def process_xml(filter, input, output, count_interval=10000, count_total=None, default_namespace=None):
+    """
+        Process all all top-level elements
+    """
+
+    level = 0
+    root_close = None
+
+    input_count = 0
+    input_counts = collections.defaultdict(int)
+    output_count = 0
+    output_counts = collections.defaultdict(int)
+
+    for event, e in ET.iterparse(input, events=['start', 'end']):
+        if event == 'start':
+            level += 1
+        elif event == 'end':
+            level -= 1
+
+        log.debug("%2d %10s %s", level, event, e.tag)
+
+        if level == 1 and event == 'start':
+            # clone just the top-level element
+            root = ET.Element(e.tag, e.attrib)
+            root.text = e.text
+
+            # output root element open
+            root_open, root_close = split_xml_root(root, default_namespace=default_namespace)
+
+            log.debug("ROOT %s => %s + %s", e, root_open, root_close)
+
+            output.write(root_open)
+
+        elif level == 2 and event == 'start':
+            input_count += 1
+            input_counts[e.tag] += 1
+
+            if input_count % count_interval == 0:
+                if count_total:
+                    log.info("Processing %d/%d elements...", input_count, count_total)
+                else:
+                    log.info("Processing %d elements...", input_count)
+
+        elif level == 1 and event == 'end':
+            ref = e # for cleanup
+
+            # process each top-level element
+            e = filter(e)
+
+            if e is None:
+                pass
+            else:
+                output_count += 1
+                output_counts[e.tag] += 1
+
+                et = ET.ElementTree(e)
+                et.write(output,
+                    xml_declaration = False,
+                    default_namespace = default_namespace,
+                )
+
+            ref.clear()
+
+        elif level == 0 and event == 'end':
+            # output root element close
+            output.write(b'\n')
+            output.write(root_close + b'\n')
+
+    log.info("Stats: %d/%d items = %.2f%%", output_count, input_count, output_count/input_count*100)
+
+    for tag in input_counts:
+        i = input_counts[tag]
+        o = output_counts[tag]
+
+        log.info("\t%-30s: %8d/%8d = %.2f%%", tag, o, i, o/i*100)
+
+def filter_attr_set(e, attrs, rewrite=None):
+    """
+        attrs   - { attr: set(values) }
+    """
+
+    values = {attr: e.get(attr) for attr in attrs}
+
+    if any((e.get(attr) not in attrs[attr]) for attr in attrs):
+        log.info("DROP %s %s", e.tag, values)
+        return None
+
+    if rewrite:
+        for attr, map in rewrite.items():
+            if map is not None:
+                old = e.get(attr)
+                new = map.get(old)
+
+                if new:
+                    log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
+                    e.set(attr, new)
+
+    log.debug("KEEP %s %s", e.tag, values)
+    return e
+
+def filter_attr_glob(e, attr, globs):
+    value = e.get(attr)
+
+    if any(fnmatch.fnmatch(value, pattern) for pattern in globs):
+        log.info("DROP %s %s=%s", e.tag, attr, value)
+        return None
+    else:
+        log.debug("KEEP %s %s=%s", e.tag, attr, value)
+        return e
+
+
+class EntityMangler:
     def __init__(self, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, rewrite_directories=None, drop_osproperty=None):
         self.element_count = 0
         self.all_users = set()
@@ -82,258 +235,123 @@ class App:
             self.keep_users |= self.project_users
             self.keep_users -= self.drop_users
 
-    def parse(self, file, count_interval=10000):
-        """
-            Iterate over all top-level elements
-        """
-
-        count = 0
-        root = None
-        level = 0
-
-        for event, e in ET.iterparse(file, events=['start', 'end']):
-            if event == 'start':
-                level += 1
-            elif event == 'end':
-                level -= 1
-
-            log.debug("%2d %10s %s", level, event, e.tag)
-
-            if level == 1 and event == 'start':
-                # process root element
-                root = e
-
-            elif level == 2 and event == 'start':
-                count += 1
-
-                if count % count_interval == 0:
-                    log.info("Processing %d elements...", count)
-
-            elif level == 1 and event == 'end':
-                # process each top-level element
-                yield e
-                e.clear()
-
-    def filter_attr_set(self, e, attrs, rewrite=None):
-        """
-            attrs   - { attr: set(values) }
-        """
-
-        values = {attr: e.get(attr) for attr in attrs}
-
-        if any((e.get(attr) not in attrs[attr]) for attr in attrs):
-            log.info("DROP %s %s", e.tag, values)
-            return None
-
-        if rewrite:
-            for attr, map in rewrite.items():
-                if map is not None:
-                    old = e.get(attr)
-                    new = map.get(old)
-
-                    if new:
-                        log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
-                        e.set(attr, new)
-
-        log.debug("KEEP %s %s", e.tag, values)
-        return e
-
-    def filter_attr_glob(self, e, attr, globs):
-        value = e.get(attr)
-
-        if any(fnmatch.fnmatch(value, pattern) for pattern in globs):
-            log.info("DROP %s %s=%s", e.tag, attr, value)
-            return None
-        else:
-            log.debug("KEEP %s %s=%s", e.tag, attr, value)
-            return e
-
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
         elif e.tag in ('OAuthServiceProviderToken', ):
             return None
         elif e.tag == 'Action':
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'author': self.rewrite_users, 'updateauthor': self.rewrite_users},
             )
         elif e.tag == 'Avatar' and e.get('avatarType') == 'user' and e.get('owner'):
-            return self.filter_attr_set(e, {'owner': self.keep_users},
+            return filter_attr_set(e, {'owner': self.keep_users},
                 rewrite = {'owner': self.rewrite_users},
             )
         elif e.tag == 'User':
-            return self.filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories, 'userName': self.rewrite_users, 'lowerUserName': self.rewrite_users},
             )
         elif e.tag == 'ApplicationUser':
-            return self.filter_attr_set(e,  {'userKey': self.keep_users},
+            return filter_attr_set(e,  {'userKey': self.keep_users},
                 rewrite = {'userKey': self.rewrite_users, 'lowerUserName': self.rewrite_users},
             )
         elif e.tag == 'Group':
-            return self.filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return self.filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories, 'childName': self.rewrite_users, 'lowerChildName': self.rewrite_users},
             )
         elif e.tag == 'UserAttribute':
-            return self.filter_attr_set(e, {'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserHistoryItem':
-            return self.filter_attr_set(e, {'username': self.keep_users},
+            return filter_attr_set(e, {'username': self.keep_users},
                 rewrite = {'entityId': self.rewrite_users, 'username': self.rewrite_users},
             )
         elif e.tag == 'SearchRequest':
-            return self.filter_attr_set(e, {'author': self.keep_users},
+            return filter_attr_set(e, {'author': self.keep_users},
                 rewrite = {'author': self.rewrite_users, 'user': self.rewrite_users},
             )
         elif e.tag == 'SharePermissions' and e.get('type') == 'group':
-            return self.filter_attr_set(e, {'param1': self.keep_groups})
+            return filter_attr_set(e, {'param1': self.keep_groups})
         elif e.tag == 'RememberMeToken':
-            return self.filter_attr_set(e, {'username': self.keep_users},
+            return filter_attr_set(e, {'username': self.keep_users},
                 rewrite = {'username': self.rewrite_users},
             )
         elif e.tag == 'ChangeGroup':
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'author': self.rewrite_users},
             )
         elif e.tag == 'ChangeItem' and e.get('field') in ('assignee', 'reporter'):
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'newvalue': self.rewrite_users, 'oldvalue': self.rewrite_users},
             )
         elif e.tag == 'FileAttachment':
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'author': self.rewrite_users},
             )
         elif e.tag == 'Issue':
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'assignee': self.rewrite_users, 'creator': self.rewrite_users, 'reporter': self.rewrite_users},
             )
         elif e.tag == 'Project':
-            return self.filter_attr_set(e, {},
+            return filter_attr_set(e, {},
                 rewrite = {'lead': self.rewrite_users},
             )
         elif e.tag == 'UserAssociation':
-            return self.filter_attr_set(e, {'sourceName': self.keep_users},
+            return filter_attr_set(e, {'sourceName': self.keep_users},
                 rewrite = {'sourceName': self.rewrite_users},
             )
         elif e.tag == 'ProjectRoleActor' and e.get('roletype') == 'atlassian-user-role-actor':
-            return self.filter_attr_set(e, {'roletypeparameter': self.keep_users},
+            return filter_attr_set(e, {'roletypeparameter': self.keep_users},
                 rewrite = {'roletypeparameter': self.rewrite_users},
             )
         elif e.tag == 'PortalPage' and e.get('username'):
-            return self.filter_attr_set(e, {'username': self.keep_users},
+            return filter_attr_set(e, {'username': self.keep_users},
                 rewrite = {'username': self.rewrite_users},
             )
         elif e.tag == 'ColumnLayout' and e.get('username'):
-            return self.filter_attr_set(e, {'username': self.keep_users},
+            return filter_attr_set(e, {'username': self.keep_users},
                 rewrite = {'username': self.rewrite_users},
             )
         elif e.tag == 'ExternalEntity':
             # TODO: drop all?
-            return self.filter_attr_set(e, {'name': self.keep_users},
+            return filter_attr_set(e, {'name': self.keep_users},
                 rewrite = {'name': self.rewrite_users},
             )
         elif e.tag == 'FavouriteAssociations':
-            return self.filter_attr_set(e, {'username': self.keep_users},
+            return filter_attr_set(e, {'username': self.keep_users},
                 rewrite = {'username': self.rewrite_users},
             )
         elif e.tag == 'Feature' and e.get('featureType') == 'user':
-            return self.filter_attr_set(e, {'userKey': self.keep_users})
+            return filter_attr_set(e, {'userKey': self.keep_users})
         elif e.tag == 'FilterSubscription':
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return filter_attr_set(e, {'username': self.keep_users})
         elif e.tag == 'Notification' and e.get('type') == 'Single_User':
-            return self.filter_attr_set(e, {'parameter': self.keep_users})
+            return filter_attr_set(e, {'parameter': self.keep_users})
         elif e.tag == 'SchemePermissions' and e.get('type') == 'user':
-            return self.filter_attr_set(e, {'parameter': self.keep_users})
+            return filter_attr_set(e, {'parameter': self.keep_users})
         elif e.tag == 'SchemePermissions' and e.get('type') == 'group':
-            return self.filter_attr_set(e, {'parameter': self.keep_groups})
+            return filter_attr_set(e, {'parameter': self.keep_groups})
         elif e.tag == 'OSHistoryStep' and e.get('caller'):
-            return self.filter_attr_set(e, {'caller': self.keep_users},
+            return filter_attr_set(e, {'caller': self.keep_users},
                 rewrite = {'caller': self.rewrite_users},
             )
         elif e.tag == 'OSPropertyEntry' and self.drop_osproperty:
-            return self.filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
+            return filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
         elif e.tag == 'Directory':
-            return self.filter_attr_set(e, {'id': self.keep_directories})
+            return filter_attr_set(e, {'id': self.keep_directories})
         elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
-            return self.filter_attr_set(e, {'directoryId': self.keep_directories})
+            return filter_attr_set(e, {'directoryId': self.keep_directories})
         else:
             return e
 
-    def process(self, input, output, count_interval=10000):
-        """
-            Process all all top-level elements
-        """
-
-        level = 0
-        root_close = None
-
-        input_count = 0
-        input_counts = collections.defaultdict(int)
-        output_count = 0
-        output_counts = collections.defaultdict(int)
-
-        for event, e in ET.iterparse(input, events=['start', 'end']):
-            if event == 'start':
-                level += 1
-            elif event == 'end':
-                level -= 1
-
-            log.debug("%2d %10s %s", level, event, e.tag)
-
-            if level == 1 and event == 'start':
-                # clone just the top-level element
-                root = ET.Element(e.tag, e.attrib)
-                root.text = e.text
-
-                # output root element open
-                root_open, root_close = split_xml_root(root)
-
-                log.debug("ROOT %s => %s + %s", e, root_open, root_close)
-
-                output.write(root_open)
-
-            elif level == 2 and event == 'start':
-                input_count += 1
-                input_counts[e.tag] += 1
-
-                if input_count % count_interval == 0:
-                    log.info("Processing %d/%d elements...", input_count, self.element_count)
-
-            elif level == 1 and event == 'end':
-                ref = e # for cleanup
-
-                # process each top-level element
-                e = self.filter(e)
-
-                if e is None:
-                    pass
-                else:
-                    output_count += 1
-                    output_counts[e.tag] += 1
-
-                    ET.ElementTree(e).write(output, xml_declaration=False)
-
-                ref.clear()
-
-            elif level == 0 and event == 'end':
-                # output root element close
-                output.write(b'\n')
-                output.write(root_close + b'\n')
-
-        log.info("Stats: %d/%d items = %.2f%%", output_count, input_count, output_count/input_count*100)
-
-        for tag in input_counts:
-            i = input_counts[tag]
-            o = output_counts[tag]
-
-            log.info("\t%-30s: %8d/%8d = %.2f%%", tag, o, i, o/i*100)
-
     def scan(self, file):
-        for e in self.parse(file):
+        for e in parse_xml(file):
             self.element_count += 1
 
             if e.tag == 'Directory' and e.get('type') == 'INTERNAL':
@@ -351,6 +369,9 @@ class App:
 
                     self.project_users.add(roletypeparameter)
 
+    def process(self, input, output):
+        process_xml(self.filter, input, output, count_total=self.element_count)
+
     def verify(self, file):
         """
             Log any tags having attributes with dropped usernames
@@ -365,7 +386,7 @@ class App:
         count = 0
         counts = collections.defaultdict(int)
 
-        for e in self.parse(file):
+        for e in parse_xml(file):
             total_count += 1
             total_counts[e.tag] += 1
 
@@ -382,6 +403,26 @@ class App:
         for tag in counts:
             log.info("\t%-30s: %8d/%8d = %.2f%%", tag, counts[tag], total_counts[tag], counts[tag]/total_counts[tag]*100)
 
+class ActiveObjectMangler:
+    XMLNS = 'http://www.atlassian.com/ao'
+    DATA = '{http://www.atlassian.com/ao}data'
+
+    def __init__(self, clear_tables=None):
+        self.clear_tables = []
+
+        if clear_tables:
+            self.clear_tables = list(clear_tables)
+
+    def filter(self, e):
+        if e.tag == self.DATA:
+            return filter_attr_glob(e, 'tableName', self.clear_tables)
+        else:
+            return e
+
+    def process(self, input, output):
+        ET.register_namespace('', self.XMLNS)
+
+        process_xml(self.filter, input, output, count_interval=10, default_namespace='')
 
 def main():
     parser = argparse.ArgumentParser(
@@ -395,7 +436,7 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_const', dest='log_level', const=logging.INFO, help="Log info messages")
     parser.add_argument('--debug', action='store_const', dest='log_level', const=logging.DEBUG, help="Log debug messages")
 
-    parser.add_argument('--input', required=True) # must be a re-openable path, not a File or sys.stdin
+    parser.add_argument('--input-entities') # must be a re-openable path, not a File or sys.stdin
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
     parser.add_argument('--keep-users', metavar='PATH', help="YAML list of users to keep")
@@ -405,7 +446,12 @@ def main():
     parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
     parser.add_argument('--drop-osproperty', metavar='PATH', help="YAML list of OSProperty key globs to drop")
     parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
-    parser.add_argument('--output', type=argparse.FileType('wb'), default=sys.stdout)
+    parser.add_argument('--output-entities', type=argparse.FileType('wb'), default=sys.stdout)
+
+    parser.add_argument('--input-activeobjects') # must be a re-openable path, not a File or sys.stdin
+    parser.add_argument('--output-activeobjects', type=argparse.FileType('wb'), default=sys.stdout)
+    parser.add_argument('--clear-activeobject-tables', metavar='PATH', help="YAML list of ActiveObject table globs to drop")
+
 
     args = parser.parse_args()
 
@@ -446,28 +492,45 @@ def main():
         with open(args.drop_osproperty) as file:
             drop_osproperty = yaml.safe_load(file)
 
-    app = App(
-        keep_users = keep_users,
-        drop_users = drop_users,
-        rewrite_users = rewrite_users,
-        keep_groups = keep_groups,
-        rewrite_directories = rewrite_directories,
-        drop_osproperty = drop_osproperty,
-    )
 
-    if args.load_state:
-        with open(args.load_state, 'r') as file:
-            app.load_state(json.load(file))
-    else:
-        app.scan(args.input)
+    if args.input_entities:
 
-    if args.save_state:
-        with open(args.save_state, 'w') as file:
-            json.dump(app.save_state(), file)
-    elif args.verify:
-        app.verify(args.input)
-    else:
-        app.process(args.input, args.output)
+        app = EntityMangler(
+            keep_users = keep_users,
+            drop_users = drop_users,
+            rewrite_users = rewrite_users,
+            keep_groups = keep_groups,
+            rewrite_directories = rewrite_directories,
+            drop_osproperty = drop_osproperty,
+        )
+
+        if args.load_state:
+            with open(args.load_state, 'r') as file:
+                app.load_state(json.load(file))
+        else:
+            app.scan(args.input_entities)
+
+        if args.save_state:
+            with open(args.save_state, 'w') as file:
+                json.dump(app.save_state(), file)
+        elif args.verify:
+            app.verify(args.input_entities)
+        else:
+            app.process(args.input_entities, args.output_entities)
+
+    if args.input_activeobjects:
+        clear_tables = None
+
+        if args.clear_activeobject_tables:
+            with open(args.clear_activeobject_tables) as file:
+                clear_tables = yaml.safe_load(file)
+
+        app = ActiveObjectMangler(
+            clear_tables = clear_tables,
+        )
+
+        if args.output_activeobjects:
+            app.process(args.input_activeobjects, args.output_activeobjects)
 
 if __name__ == '__main__':
     main()
