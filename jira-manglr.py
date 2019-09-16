@@ -24,7 +24,7 @@ def split_xml_root(e):
     return xml_open, xml_close1 + xml_close2
 
 class App:
-    def __init__(self, keep_users=None, drop_users=None, keep_groups=None, rewrite_directories=None, drop_osproperty=None):
+    def __init__(self, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, rewrite_directories=None, drop_osproperty=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
@@ -33,6 +33,7 @@ class App:
 
         self.keep_users = set()
         self.drop_users = set()
+        self.rewrite_users = {}
         self.keep_groups = set()
         self.keep_directories = set()
         self.rewrite_directories = {}
@@ -42,6 +43,8 @@ class App:
             self.keep_users = set(keep_users)
         if drop_users:
             self.drop_users = set(drop_users)
+        if rewrite_users:
+            self.rewrite_users = dict(rewrite_users)
 
         if keep_groups:
             self.keep_groups = set(keep_groups)
@@ -132,7 +135,7 @@ class App:
                         log.info("REWRITE %s %s: %s -> %s", e.tag, attr, old, new)
                         e.set(attr, new)
 
-        log.info("KEEP %s %s", e.tag, values)
+        log.debug("KEEP %s %s", e.tag, values)
         return e
 
     def filter_attr_glob(self, e, attr, globs):
@@ -150,50 +153,93 @@ class App:
             return None
         elif e.tag in ('OAuthServiceProviderToken', ):
             return None
+        elif e.tag == 'Action':
+            return self.filter_attr_set(e, {},
+                rewrite = {'author': self.rewrite_users, 'updateauthor': self.rewrite_users},
+            )
         elif e.tag == 'Avatar' and e.get('avatarType') == 'user' and e.get('owner'):
-            return self.filter_attr_set(e, {'owner': self.keep_users})
+            return self.filter_attr_set(e, {'owner': self.keep_users},
+                rewrite = {'owner': self.rewrite_users},
+            )
         elif e.tag == 'User':
             return self.filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.rewrite_directories.keys()},
-                rewrite = {'directoryId': self.rewrite_directories},
+                rewrite = {'directoryId': self.rewrite_directories, 'userName': self.rewrite_users, 'lowerUserName': self.rewrite_users},
             )
         elif e.tag == 'ApplicationUser':
-            return self.filter_attr_set(e,  {'userKey': self.keep_users}, rewrite={
-                'userKey': self.rewrite_users,
-                'lowerUserName': self.rewrite_users,
-            })
+            return self.filter_attr_set(e,  {'userKey': self.keep_users},
+                rewrite = {'userKey': self.rewrite_users, 'lowerUserName': self.rewrite_users},
+            )
         elif e.tag == 'Group':
             return self.filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
             return self.filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
-                rewrite = {'directoryId': self.rewrite_directories},
+                rewrite = {'directoryId': self.rewrite_directories, 'childName': self.rewrite_users, 'lowerChildName': self.rewrite_users},
             )
         elif e.tag == 'UserAttribute':
             return self.filter_attr_set(e, {'directoryId': self.rewrite_directories.keys()},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserHistoryItem':
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return self.filter_attr_set(e, {'username': self.keep_users},
+                rewrite = {'entityId': self.rewrite_users, 'username': self.rewrite_users},
+            )
         elif e.tag == 'SearchRequest':
-            return self.filter_attr_set(e, {'author': self.keep_users})
+            return self.filter_attr_set(e, {'author': self.keep_users},
+                rewrite = {'author': self.rewrite_users, 'user': self.rewrite_users},
+            )
         elif e.tag == 'SharePermissions' and e.get('type') == 'group':
             return self.filter_attr_set(e, {'param1': self.keep_groups})
         elif e.tag == 'RememberMeToken':
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return self.filter_attr_set(e, {'username': self.keep_users},
+                rewrite = {'username': self.rewrite_users},
+            )
+        elif e.tag == 'ChangeGroup':
+            return self.filter_attr_set(e, {},
+                rewrite = {'author': self.rewrite_users},
+            )
+        elif e.tag == 'ChangeItem' and e.get('field') in ('assignee', 'reporter'):
+            return self.filter_attr_set(e, {},
+                rewrite = {'newvalue': self.rewrite_users, 'oldvalue': self.rewrite_users},
+            )
+        elif e.tag == 'FileAttachment':
+            return self.filter_attr_set(e, {},
+                rewrite = {'author': self.rewrite_users},
+            )
+        elif e.tag == 'Issue':
+            return self.filter_attr_set(e, {},
+                rewrite = {'assignee': self.rewrite_users, 'creator': self.rewrite_users, 'reporter': self.rewrite_users},
+            )
+        elif e.tag == 'Project':
+            return self.filter_attr_set(e, {},
+                rewrite = {'lead': self.rewrite_users},
+            )
         elif e.tag == 'UserAssociation':
-            return self.filter_attr_set(e, {'sourceName': self.keep_users})
+            return self.filter_attr_set(e, {'sourceName': self.keep_users},
+                rewrite = {'sourceName': self.rewrite_users},
+            )
         elif e.tag == 'ProjectRoleActor' and e.get('roletype') == 'atlassian-user-role-actor':
-            return self.filter_attr_set(e, {'roletypeparameter': self.keep_users})
+            return self.filter_attr_set(e, {'roletypeparameter': self.keep_users},
+                rewrite = {'roletypeparameter': self.rewrite_users},
+            )
         elif e.tag == 'PortalPage' and e.get('username'):
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return self.filter_attr_set(e, {'username': self.keep_users},
+                rewrite = {'username': self.rewrite_users},
+            )
         elif e.tag == 'ColumnLayout' and e.get('username'):
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return self.filter_attr_set(e, {'username': self.keep_users},
+                rewrite = {'username': self.rewrite_users},
+            )
         elif e.tag == 'ExternalEntity':
             # TODO: drop all?
-            return self.filter_attr_set(e, {'name': self.keep_users})
+            return self.filter_attr_set(e, {'name': self.keep_users},
+                rewrite = {'name': self.rewrite_users},
+            )
         elif e.tag == 'FavouriteAssociations':
-            return self.filter_attr_set(e, {'username': self.keep_users})
+            return self.filter_attr_set(e, {'username': self.keep_users},
+                rewrite = {'username': self.rewrite_users},
+            )
         elif e.tag == 'Feature' and e.get('featureType') == 'user':
             return self.filter_attr_set(e, {'userKey': self.keep_users})
         elif e.tag == 'FilterSubscription':
@@ -205,7 +251,9 @@ class App:
         elif e.tag == 'SchemePermissions' and e.get('type') == 'group':
             return self.filter_attr_set(e, {'parameter': self.keep_groups})
         elif e.tag == 'OSHistoryStep' and e.get('caller'):
-            return self.filter_attr_set(e, {'caller': self.keep_users})
+            return self.filter_attr_set(e, {'caller': self.keep_users},
+                rewrite = {'caller': self.rewrite_users},
+            )
         elif e.tag == 'OSPropertyEntry' and self.drop_osproperty:
             return self.filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
         elif e.tag == 'Directory':
@@ -309,6 +357,8 @@ class App:
         """
 
         reject_users = self.all_users - self.keep_users
+        reject_users -= set(self.rewrite_users.values())
+        reject_users |= self.rewrite_users.keys()
 
         total_count = 0
         total_counts = collections.defaultdict(int)
@@ -350,6 +400,7 @@ def main():
     parser.add_argument('--save-state', metavar='PATH')
     parser.add_argument('--keep-users', metavar='PATH', help="YAML list of users to keep")
     parser.add_argument('--drop-users', metavar='PATH', help="YAML list of users to drop")
+    parser.add_argument('--rewrite-users', metavar='PATH', help="YAML map of users to rewrite")
     parser.add_argument('--keep-groups', metavar='PATH', help="YAML list of groups to keep")
     parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
     parser.add_argument('--drop-osproperty', metavar='PATH', help="YAML list of OSProperty key globs to drop")
@@ -366,6 +417,7 @@ def main():
 
     keep_users = None
     drop_users = None
+    rewrite_users = None
     rewrite_directories = None
     keep_groups = None
     drop_osproperty = None
@@ -377,6 +429,10 @@ def main():
     if args.drop_users:
         with open(args.drop_users) as file:
             drop_users = yaml.safe_load(file)
+
+    if args.rewrite_users:
+        with open(args.rewrite_users) as file:
+            rewrite_users = yaml.safe_load(file)
 
     if args.rewrite_directories:
         with open(args.rewrite_directories) as file:
@@ -393,6 +449,7 @@ def main():
     app = App(
         keep_users = keep_users,
         drop_users = drop_users,
+        rewrite_users = rewrite_users,
         keep_groups = keep_groups,
         rewrite_directories = rewrite_directories,
         drop_osproperty = drop_osproperty,
