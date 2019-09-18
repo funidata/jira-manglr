@@ -148,7 +148,7 @@ def filter_attr_set(e, attrs, rewrite=None):
 
     values = {attr: e.get(attr) for attr in attrs}
 
-    if any((e.get(attr) not in attrs[attr]) for attr in attrs):
+    if any((attrs[attr] is not None) and (e.get(attr) not in attrs[attr]) for attr in attrs):
         log.info("DROP %s %s", e.tag, values)
         return None
 
@@ -177,19 +177,21 @@ def filter_attr_glob(e, attr, globs):
 
 
 class EntityMangler:
-    def __init__(self, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, rewrite_directories=None, drop_osproperty=None):
+    def __init__(self, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
         self.internal_directory_id = None
         self.remap_directory_id = None
 
-        self.keep_users = set()
-        self.drop_users = set()
-        self.rewrite_users = {}
-        self.keep_groups = set()
-        self.keep_directories = set()
-        self.rewrite_directories = {}
+        self.keep_users = None
+        self.drop_users = None
+        self.rewrite_users = None
+        self.keep_groups = None
+        self.modify_users = None
+        self.keep_directories = None
+        self.filter_directories = None
+        self.rewrite_directories = None
         self.drop_osproperty = []
 
         if keep_users:
@@ -202,8 +204,12 @@ class EntityMangler:
         if keep_groups:
             self.keep_groups = set(keep_groups)
 
+        if modify_users:
+            self.modify_users = dict(modify_users)
+
         if rewrite_directories:
             self.keep_directories = {str(id) for id in rewrite_directories.values()}
+            self.filter_directories = {str(id) for id in rewrite_directories.keys()}
             self.rewrite_directories = {str(k): str(v) for k, v in rewrite_directories.items()}
 
         if drop_osproperty:
@@ -249,23 +255,29 @@ class EntityMangler:
                 rewrite = {'owner': self.rewrite_users},
             )
         elif e.tag == 'User':
-            return filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.rewrite_directories.keys()},
+            e = filter_attr_set(e, {'userName': self.keep_users, 'directoryId': self.filter_directories},
                 rewrite = {'directoryId': self.rewrite_directories, 'userName': self.rewrite_users, 'lowerUserName': self.rewrite_users},
             )
+            if (e is not None) and self.modify_users and e.get('userName') in self.modify_users:
+                log.info("MODIFY %s userName=%s", e.tag, e.get('userName'))
+                for attr, value in self.modify_users[e.get('userName')].items():
+                    log.info("MODIFY %s userName=%s: %s=%s -> %s", e.tag, e.get('userName'), attr, e.get(attr), value)
+                    e.set(attr, value)
+            return e
         elif e.tag == 'ApplicationUser':
             return filter_attr_set(e,  {'userKey': self.keep_users},
                 rewrite = {'userKey': self.rewrite_users, 'lowerUserName': self.rewrite_users},
             )
         elif e.tag == 'Group':
-            return filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'groupName': self.keep_groups, 'directoryId': self.filter_directories},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'Membership' and e.get('membershipType') == 'GROUP_USER':
-            return filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'childName': self.keep_users, 'parentName': self.keep_groups, 'directoryId': self.filter_directories},
                 rewrite = {'directoryId': self.rewrite_directories, 'childName': self.rewrite_users, 'lowerChildName': self.rewrite_users},
             )
         elif e.tag == 'UserAttribute':
-            return filter_attr_set(e, {'directoryId': self.rewrite_directories.keys()},
+            return filter_attr_set(e, {'directoryId': self.filter_directories},
                 rewrite = {'directoryId': self.rewrite_directories},
             )
         elif e.tag == 'UserHistoryItem':
@@ -483,8 +495,10 @@ def main():
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
     parser.add_argument('--keep-users', metavar='PATH', help="YAML list of users to keep")
+    parser.add_argument('--keep-project-users', action='store_true', help="Keep users associated with projects")
     parser.add_argument('--drop-users', metavar='PATH', help="YAML list of users to drop")
     parser.add_argument('--rewrite-users', metavar='PATH', help="YAML map of users to rewrite")
+    parser.add_argument('--modify-users', metavar='PATH', help="YAML map of user -> attrs to change")
     parser.add_argument('--keep-groups', metavar='PATH', help="YAML list of groups to keep")
     parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
     parser.add_argument('--drop-osproperty', metavar='PATH', help="YAML list of OSProperty key globs to drop")
@@ -507,6 +521,7 @@ def main():
     keep_users = None
     drop_users = None
     rewrite_users = None
+    modify_users = None
     rewrite_directories = None
     keep_groups = None
     drop_osproperty = None
@@ -522,6 +537,10 @@ def main():
     if args.rewrite_users:
         with open(args.rewrite_users) as file:
             rewrite_users = yaml.safe_load(file)
+
+    if args.modify_users:
+        with open(args.modify_users) as file:
+            modify_users = yaml.safe_load(file)
 
     if args.rewrite_directories:
         with open(args.rewrite_directories) as file:
@@ -543,13 +562,14 @@ def main():
             drop_users = drop_users,
             rewrite_users = rewrite_users,
             keep_groups = keep_groups,
+            modify_users = modify_users,
             rewrite_directories = rewrite_directories,
             drop_osproperty = drop_osproperty,
         )
 
         if args.load_state:
             with open(args.load_state, 'r') as file:
-                app.load_state(json.load(file))
+                app.load_state(json.load(file), keep_project_users=args.keep_project_users)
         else:
             app.scan(args.input_entities)
 
