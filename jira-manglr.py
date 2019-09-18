@@ -238,13 +238,18 @@ class EntityMangler:
             self.internal_directory_id = state['internal_directory_id']
 
         if keep_project_users:
+            if not self.keep_users:
+                self.keep_users = set()
+
             self.keep_users |= self.project_users
-            self.keep_users -= self.drop_users
+
+            if self.drop_users:
+                self.keep_users -= self.drop_users
 
     def filter(self, e):
         if e.tag in ('AuditChangedValue', 'AuditItem', 'AuditLog'):
             return None
-        elif e.tag in ('OAuthServiceProviderToken', ):
+        elif e.tag in ('OAuthConsumer', 'OAuthServiceProviderConsumer', 'OAuthServiceProviderToken'):
             return None
         elif e.tag == 'Action':
             return filter_attr_set(e, {},
