@@ -165,6 +165,20 @@ def filter_attr_set(e, attrs, rewrite=None):
     log.debug("KEEP %s %s", e.tag, values)
     return e
 
+def filter_attr_drop_set(e, attrs):
+    """
+        attrs   - { attr: set(values) }
+    """
+
+    values = {attr: e.get(attr) for attr in attrs}
+
+    if any((attrs[attr] is not None) and (e.get(attr) in attrs[attr]) for attr in attrs):
+        log.info("DROP %s %s", e.tag, values)
+        return None
+
+    log.debug("KEEP %s %s", e.tag, values)
+    return e
+
 def filter_attr_glob(e, attr, globs):
     value = e.get(attr)
 
@@ -193,6 +207,7 @@ class EntityMangler:
         self.filter_directories = None
         self.rewrite_directories = None
         self.drop_osproperty = []
+        self.drop_osproperty_ids = set()
 
         if keep_users:
             self.keep_users = set(keep_users)
@@ -221,6 +236,7 @@ class EntityMangler:
             'all_users': list(self.all_users),
             'project_users': list(self.project_users),
             'internal_directory_id': self.internal_directory_id,
+            'drop_osproperty_ids': list(self.drop_osproperty_ids),
         }
 
     def load_state(self, state, keep_project_users=True):
@@ -236,6 +252,9 @@ class EntityMangler:
 
         if 'internal_directory_id' in state:
             self.internal_directory_id = state['internal_directory_id']
+
+        if 'drop_osproperty_ids' in state:
+            self.drop_osproperty_ids = set(state['drop_osproperty_ids'])
 
         if keep_project_users:
             if not self.keep_users:
@@ -360,6 +379,8 @@ class EntityMangler:
             )
         elif e.tag == 'OSPropertyEntry' and self.drop_osproperty:
             return filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
+        elif e.tag in ('OSPropertyDecimal', 'OSPropertyNumber', 'OSPropertyString', 'OSPropertyText'):
+            return filter_attr_drop_set(e, {'id': self.drop_osproperty_ids})
         elif e.tag == 'Directory':
             return filter_attr_set(e, {'id': self.keep_directories})
         elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
@@ -374,7 +395,10 @@ class EntityMangler:
             self.element_count += 1
 
             if e.tag == 'Directory' and e.get('type') == 'INTERNAL':
-                self.internal_directory_id = e.get('id')
+                id = e.get('id')
+
+                log.info("SCAN internal_directory_id %s", id)
+                self.internal_directory_id = id
 
             if e.tag == 'User':
                 self.all_users.add(e.get('userName'))
@@ -384,9 +408,18 @@ class EntityMangler:
                 roletypeparameter = e.get('roletypeparameter')
 
                 if roletype == 'atlassian-user-role-actor':
-                    log.info("project_role_actor_users %s", roletypeparameter)
+                    log.info("SCAN project_role_actor_users %s", roletypeparameter)
 
                     self.project_users.add(roletypeparameter)
+
+            elif e.tag == 'OSPropertyEntry':
+                id = e.get('id')
+                value = e.get('propertyKey')
+
+                if any(fnmatch.fnmatch(value, pattern) for pattern in self.drop_osproperty):
+                    log.info("SCAN drop_osproperty_ids %s (propertyKey=%s)", id, value)
+
+                    self.drop_osproperty_ids.add(id)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
