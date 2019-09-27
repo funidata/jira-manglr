@@ -213,10 +213,11 @@ class EntityMangler:
 
         if keep_users:
             self.keep_users = set(keep_users)
-        if drop_users:
-            self.drop_users = set(drop_users)
         if rewrite_users:
             self.rewrite_users = dict(rewrite_users)
+            self.keep_users |= set(rewrite_users.keys())
+        if drop_users:
+            self.drop_users = set(drop_users)
 
         if keep_groups:
             self.keep_groups = set(keep_groups)
