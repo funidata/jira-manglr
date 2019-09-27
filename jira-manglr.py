@@ -89,7 +89,8 @@ def process_xml(filter, input, output, count_interval=10000, count_total=None, d
         if level == 1 and event == 'start':
             # clone just the top-level element
             root = ET.Element(e.tag, e.attrib)
-            root.text = e.text
+            root.text = '\n\t'
+            root.tail = '\n'
 
             # output root element open
             root_open, root_close = split_xml_root(root, default_namespace=default_namespace)
@@ -120,6 +121,7 @@ def process_xml(filter, input, output, count_interval=10000, count_total=None, d
                 output_count += 1
                 output_counts[e.tag] += 1
 
+                e.tail = '\n\t'
                 et = ET.ElementTree(e)
                 et.write(output,
                     xml_declaration = False,
@@ -130,8 +132,7 @@ def process_xml(filter, input, output, count_interval=10000, count_total=None, d
 
         elif level == 0 and event == 'end':
             # output root element close
-            output.write(b'\n')
-            output.write(root_close + b'\n')
+            output.write(root_close)
 
     log.info("Stats: %d/%d items = %.2f%%", output_count, input_count, output_count/input_count*100)
 
