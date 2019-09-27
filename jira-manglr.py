@@ -204,6 +204,7 @@ class EntityMangler:
         self.osproperties = {}
         self.scheme_ids = collections.defaultdict(set)
         self.scheme_ids['PermissionScheme'].add(self.DEFAULT_PERMISSON_SCHEME)
+        self.workflows = set()
 
         self.keep_project_users = keep_project_users
         self.keep_users = None
@@ -250,6 +251,7 @@ class EntityMangler:
             'drop_osproperty_ids': list(self.drop_osproperty_ids),
             'osproperties': dict(self.osproperties),
             'scheme_ids': {k: list(s) for k, s in self.scheme_ids.items()},
+            'workflows': list(self.workflows),
         }
 
     def load_state(self, state):
@@ -274,6 +276,9 @@ class EntityMangler:
         if 'scheme_ids' in state:
             for k, v in state['scheme_ids'].items():
                 self.scheme_ids[k] = set(v)
+
+        if 'workflows' in state:
+            self.workflows = set(state['workflows'])
 
         if self.keep_project_users:
             if not self.keep_users:
@@ -456,10 +461,31 @@ class EntityMangler:
         elif e.tag == 'WorkflowSchemeEntity':
             return filter_attr_set(e, {'scheme': self.scheme_ids['WorkflowScheme']})
 
+
+        elif e.tag == 'FieldScreenScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['FieldScreenScheme']})
+        elif e.tag == 'FieldScreenSchemeItem':
+            return filter_attr_set(e, {'fieldscreenscheme': self.scheme_ids['FieldScreenScheme']})
+
+        elif e.tag == 'FieldLayout':
+            if e.get('type') == 'default':
+                return e
+            else:
+                return filter_attr_set(e, {'id': self.scheme_ids['FieldLayout']})
+        elif e.tag == 'FieldLayoutItem':
+            return filter_attr_set(e, {'fieldlayout': self.scheme_ids['FieldLayout']})
+
+        elif e.tag == 'Workflow':
+            return filter_attr_set(e, {'name': self.workflows})
+
         else:
             return e
 
     def scan(self, file):
+        IssueTypeScreenSchemeEntity_FieldScreenScheme = collections.defaultdict(set)
+        FieldLayoutSchemeEntity_FieldLayout = collections.defaultdict(set)
+        WorkflowSchemeEntity_workflow = collections.defaultdict(set)
+
         for e in parse_xml(file):
             self.element_count += 1
 
@@ -502,6 +528,28 @@ class EntityMangler:
 
                 log.info("SCAN scheme_ids %s => %s", entity, id)
                 self.scheme_ids[entity].add(id)
+
+            elif e.tag == 'IssueTypeScreenSchemeEntity':
+                IssueTypeScreenSchemeEntity_FieldScreenScheme[e.get('scheme')].add(e.get('fieldscreenscheme'))
+
+            elif e.tag == 'FieldLayoutSchemeEntity' and e.get('fieldlayout'):
+                FieldLayoutSchemeEntity_FieldLayout[e.get('scheme')].add(e.get('fieldlayout'))
+
+            elif e.tag == 'WorkflowSchemeEntity':
+                WorkflowSchemeEntity_workflow[e.get('scheme')].add(e.get('workflow'))
+
+        # indirect references
+        for id in self.scheme_ids['IssueTypeScreenScheme']:
+            for schema_id in IssueTypeScreenSchemeEntity_FieldScreenScheme[id]:
+                self.scheme_ids['FieldScreenScheme'].add(schema_id)
+
+        for id in self.scheme_ids['FieldLayoutScheme']:
+            for schema_id in FieldLayoutSchemeEntity_FieldLayout[id]:
+                self.scheme_ids['FieldLayout'].add(schema_id)
+
+        for scheme in self.scheme_ids['WorkflowScheme']:
+            for workflow in WorkflowSchemeEntity_workflow[scheme]:
+                self.workflows.add(workflow)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
