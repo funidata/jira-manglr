@@ -467,6 +467,13 @@ class EntityMangler:
         elif e.tag == 'FieldScreenSchemeItem':
             return filter_attr_set(e, {'fieldscreenscheme': self.scheme_ids['FieldScreenScheme']})
 
+        elif e.tag == 'FieldScreen':
+            return filter_attr_set(e, {'id': self.scheme_ids['FieldScreen']})
+        elif e.tag == 'FieldScreenTab':
+            return filter_attr_set(e, {'fieldscreen': self.scheme_ids['FieldScreen']})
+        elif e.tag == 'FieldScreenLayoutItem':
+            return filter_attr_set(e, {'fieldscreentab': self.scheme_ids['FieldScreenTab']})
+
         elif e.tag == 'FieldLayout':
             if e.get('type') == 'default':
                 return e
@@ -485,6 +492,9 @@ class EntityMangler:
         IssueTypeScreenSchemeEntity_FieldScreenScheme = collections.defaultdict(set)
         FieldLayoutSchemeEntity_FieldLayout = collections.defaultdict(set)
         WorkflowSchemeEntity_workflow = collections.defaultdict(set)
+        FieldScreenSchemeItem_fieldscreen = collections.defaultdict(set)
+        Workflow_fieldscreen = collections.defaultdict(set)
+        fieldscreen_FieldScreenTab = collections.defaultdict(set)
 
         for e in parse_xml(file):
             self.element_count += 1
@@ -538,6 +548,23 @@ class EntityMangler:
             elif e.tag == 'WorkflowSchemeEntity':
                 WorkflowSchemeEntity_workflow[e.get('scheme')].add(e.get('workflow'))
 
+            elif e.tag == 'FieldScreenSchemeItem':
+                FieldScreenSchemeItem_fieldscreen[e.get('fieldscreenscheme')].add(e.get('fieldscreen'))
+
+            elif e.tag == 'Workflow':
+                workflow = ET.fromstring(e.findtext('descriptor'))
+                name = e.get('name')
+
+                for action in workflow.iter('action'):
+                    if action.get('view') == 'fieldscreen':
+                        for meta in action.iter('meta'):
+                            if meta.get('name') == 'jira.fieldscreen.id':
+                                Workflow_fieldscreen[name].add(meta.text.strip())
+
+            elif e.tag == 'FieldScreenTab':
+                fieldscreen_FieldScreenTab[e.get('fieldscreen')].add(e.get('id'))
+
+
         # indirect references
         for id in self.scheme_ids['IssueTypeScreenScheme']:
             for schema_id in IssueTypeScreenSchemeEntity_FieldScreenScheme[id]:
@@ -550,6 +577,18 @@ class EntityMangler:
         for scheme in self.scheme_ids['WorkflowScheme']:
             for workflow in WorkflowSchemeEntity_workflow[scheme]:
                 self.workflows.add(workflow)
+
+        for fieldscreenscheme in self.scheme_ids['FieldScreenScheme']:
+            for fieldscreen in FieldScreenSchemeItem_fieldscreen[fieldscreenscheme]:
+                self.scheme_ids['FieldScreen'].add(fieldscreen)
+
+        for workflow in self.workflows:
+            for fieldscreen in Workflow_fieldscreen[workflow]:
+                self.scheme_ids['FieldScreen'].add(fieldscreen)
+
+        for fieldscreen in self.scheme_ids['FieldScreen']:
+            for fieldscreentag in fieldscreen_FieldScreenTab[fieldscreen]:
+                self.scheme_ids['FieldScreenTab'].add(fieldscreentag)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
