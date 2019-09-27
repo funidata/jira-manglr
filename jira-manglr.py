@@ -192,12 +192,14 @@ def filter_attr_glob(e, attr, globs):
 
 
 class EntityMangler:
-    def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None):
+    def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None, rewrite_osproperty=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
         self.internal_directory_id = None
         self.remap_directory_id = None
+        self.drop_osproperty_ids = set()
+        self.osproperties = {}
 
         self.keep_project_users = keep_project_users
         self.keep_users = None
@@ -208,8 +210,8 @@ class EntityMangler:
         self.keep_directories = None
         self.filter_directories = None
         self.rewrite_directories = None
-        self.drop_osproperty = []
-        self.drop_osproperty_ids = set()
+        self.drop_osproperty = [] # globs
+        self.rewrite_osproperty = {} # { name/key: ... }
 
         if keep_users:
             self.keep_users = set(keep_users)
@@ -232,6 +234,8 @@ class EntityMangler:
 
         if drop_osproperty:
             self.drop_osproperty = list(drop_osproperty)
+        if rewrite_osproperty:
+            self.rewrite_osproperty = dict(rewrite_osproperty)
 
     def save_state(self):
         return {
@@ -240,6 +244,7 @@ class EntityMangler:
             'project_users': list(self.project_users),
             'internal_directory_id': self.internal_directory_id,
             'drop_osproperty_ids': list(self.drop_osproperty_ids),
+            'osproperties': dict(self.osproperties),
         }
 
     def load_state(self, state):
@@ -258,6 +263,8 @@ class EntityMangler:
 
         if 'drop_osproperty_ids' in state:
             self.drop_osproperty_ids = set(state['drop_osproperty_ids'])
+        if 'osproperties' in state:
+            self.osproperties = dict(state['osproperties'])
 
         if self.keep_project_users:
             if not self.keep_users:
@@ -381,9 +388,24 @@ class EntityMangler:
                 rewrite = {'caller': self.rewrite_users},
             )
         elif e.tag == 'OSPropertyEntry' and self.drop_osproperty:
-            return filter_attr_glob(e, 'propertyKey', self.drop_osproperty)
-        elif e.tag in ('OSPropertyDecimal', 'OSPropertyNumber', 'OSPropertyString', 'OSPropertyText'):
             return filter_attr_drop_set(e, {'id': self.drop_osproperty_ids})
+
+        elif e.tag in ('OSPropertyDecimal', 'OSPropertyNumber', 'OSPropertyString', 'OSPropertyText'):
+            id = e.get('id')
+            e =  filter_attr_drop_set(e, {'id': self.drop_osproperty_ids})
+
+            if (e is not None) and (id in self.osproperties):
+                p = self.osproperties[id]
+
+                if p in self.rewrite_osproperty:
+                    old = e.get('value')
+                    new = self.rewrite_osproperty[p]
+
+                    log.info("REWRITE %s id=%s (%s): %s => %s", e.tag, id, p, old, new)
+                    e.set('value', new)
+
+            return e
+
         elif e.tag == 'Directory':
             return filter_attr_set(e, {'id': self.keep_directories})
         elif e.tag in ('DirectoryAttribute', 'DirectoryOperation'):
@@ -417,10 +439,16 @@ class EntityMangler:
 
             elif e.tag == 'OSPropertyEntry':
                 id = e.get('id')
-                value = e.get('propertyKey')
+                name = e.get('entityName')
+                key = e.get('propertyKey')
+                p = f'{name}/{key}'
 
-                if any(fnmatch.fnmatch(value, pattern) for pattern in self.drop_osproperty):
-                    log.info("SCAN drop_osproperty_ids %s (propertyKey=%s)", id, value)
+                if p in self.rewrite_osproperty:
+                    log.info("SCAN rewrite_osproperty %s => id=%s", p, id)
+                    self.osproperties[id] = p
+
+                if any(fnmatch.fnmatch(p, pattern) for pattern in self.drop_osproperty):
+                    log.info("SCAN drop_osproperty %s => id=%s", p, id)
 
                     self.drop_osproperty_ids.add(id)
 
