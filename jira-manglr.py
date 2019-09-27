@@ -191,13 +191,14 @@ def filter_attr_glob(e, attr, globs):
 
 
 class EntityMangler:
-    def __init__(self, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None):
+    def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None):
         self.element_count = 0
         self.all_users = set()
         self.project_users = set()
         self.internal_directory_id = None
         self.remap_directory_id = None
 
+        self.keep_project_users = keep_project_users
         self.keep_users = None
         self.drop_users = None
         self.rewrite_users = None
@@ -239,7 +240,7 @@ class EntityMangler:
             'drop_osproperty_ids': list(self.drop_osproperty_ids),
         }
 
-    def load_state(self, state, keep_project_users=True):
+    def load_state(self, state):
         self.element_count = state['element_count']
 
         if 'project_role_actor_users' in state:
@@ -256,7 +257,7 @@ class EntityMangler:
         if 'drop_osproperty_ids' in state:
             self.drop_osproperty_ids = set(state['drop_osproperty_ids'])
 
-        if keep_project_users:
+        if self.keep_project_users:
             if not self.keep_users:
                 self.keep_users = set()
 
@@ -529,24 +530,16 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_const', dest='log_level', const=logging.INFO, help="Log info messages")
     parser.add_argument('--debug', action='store_const', dest='log_level', const=logging.DEBUG, help="Log debug messages")
 
+    parser.add_argument('--config', metavar='PATH', help="YAML config")
+
     parser.add_argument('--input-entities') # must be a re-openable path, not a File or sys.stdin
     parser.add_argument('--load-state', metavar='PATH')
     parser.add_argument('--save-state', metavar='PATH')
-    parser.add_argument('--keep-users', metavar='PATH', help="YAML list of users to keep")
-    parser.add_argument('--keep-project-users', action='store_true', help="Keep users associated with projects")
-    parser.add_argument('--drop-users', metavar='PATH', help="YAML list of users to drop")
-    parser.add_argument('--rewrite-users', metavar='PATH', help="YAML map of users to rewrite")
-    parser.add_argument('--modify-users', metavar='PATH', help="YAML map of user -> attrs to change")
-    parser.add_argument('--keep-groups', metavar='PATH', help="YAML list of groups to keep")
-    parser.add_argument('--rewrite-directories', metavar='PATH', help="YAML map of user/group directories to rewrite")
-    parser.add_argument('--drop-osproperty', metavar='PATH', help="YAML list of OSProperty key globs to drop")
     parser.add_argument('--verify', action='store_true', help="Log any tags with dropped usernames")
-    parser.add_argument('--output-entities', type=argparse.FileType('wb'), default=sys.stdout)
+    parser.add_argument('--output-entities', type=argparse.FileType('wb'))
 
     parser.add_argument('--input-activeobjects') # must be a re-openable path, not a File or sys.stdin
     parser.add_argument('--output-activeobjects', type=argparse.FileType('wb'), default=sys.stdout)
-    parser.add_argument('--clear-activeobject-tables', metavar='PATH', help="YAML list of ActiveObject table globs to drop")
-
 
     args = parser.parse_args()
 
@@ -556,80 +549,36 @@ def main():
         format      = "%(asctime)s %(levelname)5s %(module)s: %(message)s",
     )
 
-    keep_users = None
-    drop_users = None
-    rewrite_users = None
-    modify_users = None
-    rewrite_directories = None
-    keep_groups = None
-    drop_osproperty = None
+    config = {}
 
-    if args.keep_users:
-        with open(args.keep_users) as file:
-            keep_users = yaml.safe_load(file)
+    if args.config:
+        with open(args.config) as file:
+            config = yaml.safe_load(file)
 
-    if args.drop_users:
-        with open(args.drop_users) as file:
-            drop_users = yaml.safe_load(file)
-
-    if args.rewrite_users:
-        with open(args.rewrite_users) as file:
-            rewrite_users = yaml.safe_load(file)
-
-    if args.modify_users:
-        with open(args.modify_users) as file:
-            modify_users = yaml.safe_load(file)
-
-    if args.rewrite_directories:
-        with open(args.rewrite_directories) as file:
-            rewrite_directories = yaml.safe_load(file)
-
-    if args.keep_groups:
-        with open(args.keep_groups) as file:
-            keep_groups = yaml.safe_load(file)
-
-    if args.drop_osproperty:
-        with open(args.drop_osproperty) as file:
-            drop_osproperty = yaml.safe_load(file)
-
+    entities_config = config['entities']
+    activeobjects_config = config['activeobjects']
 
     if args.input_entities:
-
-        app = EntityMangler(
-            keep_users = keep_users,
-            drop_users = drop_users,
-            rewrite_users = rewrite_users,
-            keep_groups = keep_groups,
-            modify_users = modify_users,
-            rewrite_directories = rewrite_directories,
-            drop_osproperty = drop_osproperty,
-        )
+        app = EntityMangler(**entities_config)
 
         if args.load_state:
             with open(args.load_state, 'r') as file:
-                app.load_state(json.load(file), keep_project_users=args.keep_project_users)
+                app.load_state(json.load(file))
         else:
             app.scan(args.input_entities)
 
         if args.save_state:
             with open(args.save_state, 'w') as file:
                 json.dump(app.save_state(), file)
-        elif args.verify:
+
+        if args.verify:
             app.verify(args.input_entities)
-        else:
+
+        if args.output_entities:
             app.process(args.input_entities, args.output_entities)
 
     if args.input_activeobjects:
-        clear_tables = None
-
-        if args.clear_activeobject_tables:
-            with open(args.clear_activeobject_tables) as file:
-                clear_tables = yaml.safe_load(file)
-
-        app = ActiveObjectMangler(
-            clear_tables = clear_tables,
-            rewrite_users = rewrite_users,
-        )
+        app = ActiveObjectMangler(rewrite_users=entities_config['rewrite_users'], **activeobjects_config)
 
         if args.output_activeobjects:
             app.process(args.input_activeobjects, args.output_activeobjects)
