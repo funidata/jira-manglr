@@ -487,6 +487,9 @@ class EntityMangler:
         elif e.tag == 'Workflow':
             return filter_attr_set(e, {'name': self.workflows})
 
+        elif e.tag == 'Status':
+            return filter_attr_set(e, {'id': self.scheme_ids['Status']})
+
         else:
             return e
 
@@ -496,6 +499,7 @@ class EntityMangler:
         WorkflowSchemeEntity_workflow = collections.defaultdict(set)
         FieldScreenSchemeItem_fieldscreen = collections.defaultdict(set)
         Workflow_fieldscreen = collections.defaultdict(set)
+        Workflow_status = collections.defaultdict(set)
         fieldscreen_FieldScreenTab = collections.defaultdict(set)
 
         for e in parse_xml(file):
@@ -563,9 +567,13 @@ class EntityMangler:
                             if meta.get('name') == 'jira.fieldscreen.id':
                                 Workflow_fieldscreen[name].add(meta.text.strip())
 
+                for step in workflow.iter('step'):
+                    for meta in step.iter('meta'):
+                        if meta.get('name') == 'jira.status.id':
+                            Workflow_status[name].add(meta.text.strip())
+
             elif e.tag == 'FieldScreenTab':
                 fieldscreen_FieldScreenTab[e.get('fieldscreen')].add(e.get('id'))
-
 
         # indirect references
         for id in self.scheme_ids['IssueTypeScreenScheme']:
@@ -591,6 +599,10 @@ class EntityMangler:
         for fieldscreen in self.scheme_ids['FieldScreen']:
             for fieldscreentag in fieldscreen_FieldScreenTab[fieldscreen]:
                 self.scheme_ids['FieldScreenTab'].add(fieldscreentag)
+
+        for workflow in self.workflows:
+            for status in Workflow_status[workflow]:
+                self.scheme_ids['Status'].add(status)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
