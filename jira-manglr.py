@@ -192,6 +192,8 @@ def filter_attr_glob(e, attr, globs):
 
 
 class EntityMangler:
+    DEFAULT_PERMISSON_SCHEME = "0"
+
     def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None, rewrite_osproperty=None):
         self.element_count = 0
         self.all_users = set()
@@ -200,6 +202,8 @@ class EntityMangler:
         self.remap_directory_id = None
         self.drop_osproperty_ids = set()
         self.osproperties = {}
+        self.scheme_ids = collections.defaultdict(set)
+        self.scheme_ids['PermissionScheme'].add(self.DEFAULT_PERMISSON_SCHEME)
 
         self.keep_project_users = keep_project_users
         self.keep_users = None
@@ -245,6 +249,7 @@ class EntityMangler:
             'internal_directory_id': self.internal_directory_id,
             'drop_osproperty_ids': list(self.drop_osproperty_ids),
             'osproperties': dict(self.osproperties),
+            'scheme_ids': {k: list(s) for k, s in self.scheme_ids.items()},
         }
 
     def load_state(self, state):
@@ -265,6 +270,10 @@ class EntityMangler:
             self.drop_osproperty_ids = set(state['drop_osproperty_ids'])
         if 'osproperties' in state:
             self.osproperties = dict(state['osproperties'])
+
+        if 'scheme_ids' in state:
+            for k, v in state['scheme_ids'].items():
+                self.scheme_ids[k] = set(v)
 
         if self.keep_project_users:
             if not self.keep_users:
@@ -412,6 +421,41 @@ class EntityMangler:
             return filter_attr_set(e, {'directoryId': self.keep_directories})
         elif e.tag == 'MailServer':
             return None
+        elif e.tag == 'ProjectCategory':
+            return None # TODO: map projects?
+
+        elif e.tag == 'IssueSecurityScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['IssueSecurityScheme']})
+        elif e.tag == 'SchemeIssueSecurities':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['IssueSecurityScheme']})
+        elif e.tag == 'SchemeIssueSecurityLevels':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['IssueSecurityScheme']})
+
+        elif e.tag == 'NotificationScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['NotificationScheme']})
+        elif e.tag == 'Notification':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['NotificationScheme']})
+
+        elif e.tag == 'PermissionScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['PermissionScheme']})
+        elif e.tag == 'SchemePermissions':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['PermissionScheme']})
+
+        elif e.tag == 'IssueTypeScreenScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['IssueTypeScreenScheme']})
+        elif e.tag == 'IssueTypeScreenSchemeEntity':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['IssueTypeScreenScheme']})
+
+        elif e.tag == 'FieldLayoutScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['FieldLayoutScheme']})
+        elif e.tag == 'FieldLayoutSchemeEntity':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['FieldLayoutScheme']})
+
+        elif e.tag == 'WorkflowScheme':
+            return filter_attr_set(e, {'id': self.scheme_ids['WorkflowScheme']})
+        elif e.tag == 'WorkflowSchemeEntity':
+            return filter_attr_set(e, {'scheme': self.scheme_ids['WorkflowScheme']})
+
         else:
             return e
 
@@ -451,6 +495,13 @@ class EntityMangler:
                     log.info("SCAN drop_osproperty %s => id=%s", p, id)
 
                     self.drop_osproperty_ids.add(id)
+
+            elif e.tag == 'NodeAssociation' and e.get('associationType') == 'ProjectScheme':
+                entity = e.get('sinkNodeEntity')
+                id = e.get('sinkNodeId')
+
+                log.info("SCAN scheme_ids %s => %s", entity, id)
+                self.scheme_ids[entity].add(id)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
