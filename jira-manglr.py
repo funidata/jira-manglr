@@ -194,9 +194,11 @@ def filter_attr_glob(e, attr, globs):
 class EntityMangler:
     DEFAULT_PERMISSON_SCHEME = "0"
     DEFAULT_FIELDSCREEN_IDS = {'1', '2', '3'}
+    DEFAULT_FIELDCONFIGSCHEME = '1'
 
     def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None, rewrite_osproperty=None):
         self.element_count = 0
+        self.projects_ids = set()
         self.all_users = set()
         self.project_users = set()
         self.internal_directory_id = None
@@ -206,6 +208,7 @@ class EntityMangler:
         self.scheme_ids = collections.defaultdict(set)
         self.scheme_ids['PermissionScheme'].add(self.DEFAULT_PERMISSON_SCHEME)
         self.scheme_ids['FieldScreen'].update(self.DEFAULT_FIELDSCREEN_IDS)
+        self.scheme_ids['FieldConfigScheme'].add(self.DEFAULT_FIELDCONFIGSCHEME)
         self.workflows = set()
 
         self.keep_project_users = keep_project_users
@@ -247,6 +250,7 @@ class EntityMangler:
     def save_state(self):
         return {
             'element_count': self.element_count,
+            'projects_ids': list(self.projects_ids),
             'all_users': list(self.all_users),
             'project_users': list(self.project_users),
             'internal_directory_id': self.internal_directory_id,
@@ -258,6 +262,9 @@ class EntityMangler:
 
     def load_state(self, state):
         self.element_count = state['element_count']
+
+        if 'projects_ids' in state:
+            self.projects_ids = set(state['projects_ids'])
 
         if 'project_role_actor_users' in state:
             self.project_users = set(state['project_role_actor_users'])
@@ -490,17 +497,31 @@ class EntityMangler:
         elif e.tag == 'Status':
             return filter_attr_set(e, {'id': self.scheme_ids['Status']})
 
+        elif e.tag == 'FieldConfigScheme' and e.get('fieldid') == 'issuetype':
+            return filter_attr_set(e, {'id': self.scheme_ids['FieldConfigScheme']})
+        elif e.tag == 'FieldConfigSchemeIssueType':
+            return filter_attr_set(e, {'fieldconfigscheme': self.scheme_ids['FieldConfigScheme']})
+        elif e.tag == 'FieldConfiguration':
+            return filter_attr_set(e, {'id': self.scheme_ids['FieldConfiguration']})
+        elif e.tag == 'OptionConfiguration' and e.get('fieldid') == 'issuetype': # TODO: customfields?
+            return filter_attr_set(e, {'fieldconfig': self.scheme_ids['FieldConfiguration']})
+
         else:
             return e
 
     def scan(self, file):
         IssueTypeScreenSchemeEntity_FieldScreenScheme = collections.defaultdict(set)
+        IssueTypeScreenSchemeEntity_issuetype = collections.defaultdict(set)
         FieldLayoutSchemeEntity_FieldLayout = collections.defaultdict(set)
         WorkflowSchemeEntity_workflow = collections.defaultdict(set)
         FieldScreenSchemeItem_fieldscreen = collections.defaultdict(set)
         Workflow_fieldscreen = collections.defaultdict(set)
         Workflow_status = collections.defaultdict(set)
         fieldscreen_FieldScreenTab = collections.defaultdict(set)
+        project_issuetype_fieldconfigscheme = collections.defaultdict(set) # ConfigurationContext
+        customfield_FieldConfigScheme = collections.defaultdict(set)
+        fieldconfigscheme_FieldConfigSchemeIssueType_fieldconfiguration = collections.defaultdict(set)
+        fieldconfig_OptionConfiguration_issuetype = collections.defaultdict(set)
 
         for e in parse_xml(file):
             self.element_count += 1
@@ -513,6 +534,9 @@ class EntityMangler:
 
             if e.tag == 'User':
                 self.all_users.add(e.get('userName'))
+
+            elif e.tag == 'Project':
+                self.projects_ids.add(e.get('id'))
 
             elif e.tag == 'ProjectRoleActor':
                 roletype = e.get('roletype')
@@ -548,6 +572,9 @@ class EntityMangler:
             elif e.tag == 'IssueTypeScreenSchemeEntity':
                 IssueTypeScreenSchemeEntity_FieldScreenScheme[e.get('scheme')].add(e.get('fieldscreenscheme'))
 
+                if e.get('issuetype'):
+                    IssueTypeScreenSchemeEntity_issuetype[e.get('scheme')].add(e.get('issuetype'))
+
             elif e.tag == 'FieldLayoutSchemeEntity' and e.get('fieldlayout'):
                 FieldLayoutSchemeEntity_FieldLayout[e.get('scheme')].add(e.get('fieldlayout'))
 
@@ -575,10 +602,26 @@ class EntityMangler:
             elif e.tag == 'FieldScreenTab':
                 fieldscreen_FieldScreenTab[e.get('fieldscreen')].add(e.get('id'))
 
+            elif e.tag == 'ConfigurationContext' and e.get('key') == 'issuetype':
+                project_issuetype_fieldconfigscheme[e.get('project')] = e.get('fieldconfigscheme')
+
+            elif e.tag == 'FieldConfigScheme' and e.get('fieldid').startswith('customfield_'):
+                # XXX: all customfields
+                customfield_FieldConfigScheme[e.get('fieldid')].add(e.get('id'))
+
+            elif e.tag == 'FieldConfigSchemeIssueType':
+                fieldconfigscheme_FieldConfigSchemeIssueType_fieldconfiguration[e.get('fieldconfigscheme')].add(e.get('fieldconfiguration'))
+
+            elif e.tag == 'OptionConfiguration' and e.get('fieldid') == 'issuetype':
+                fieldconfig_OptionConfiguration_issuetype[e.get('fieldconfig')].add(e.get('optionid'))
+
         # indirect references
         for id in self.scheme_ids['IssueTypeScreenScheme']:
             for schema_id in IssueTypeScreenSchemeEntity_FieldScreenScheme[id]:
                 self.scheme_ids['FieldScreenScheme'].add(schema_id)
+
+            for issuetype in IssueTypeScreenSchemeEntity_issuetype[id]:
+                self.scheme_ids['IssueType'].add(issuetype)
 
         for id in self.scheme_ids['FieldLayoutScheme']:
             for schema_id in FieldLayoutSchemeEntity_FieldLayout[id]:
@@ -603,6 +646,22 @@ class EntityMangler:
         for workflow in self.workflows:
             for status in Workflow_status[workflow]:
                 self.scheme_ids['Status'].add(status)
+
+        for project in self.projects_ids:
+            self.scheme_ids['FieldConfigScheme'].add(project_issuetype_fieldconfigscheme[project])
+
+        for customfield in customfield_FieldConfigScheme:
+            # TODO: only used customfields
+            for fieldconfiguration in customfield_FieldConfigScheme[customfield]:
+                self.scheme_ids['FieldConfigScheme'].add(fieldconfiguration)
+
+        for fieldconfigscheme in self.scheme_ids['FieldConfigScheme']:
+            for fieldconfiguration in fieldconfigscheme_FieldConfigSchemeIssueType_fieldconfiguration[fieldconfigscheme]:
+                self.scheme_ids['FieldConfiguration'].add(fieldconfiguration)
+
+        for fieldconfig in self.scheme_ids['FieldConfiguration']:
+            for issuetype in fieldconfig_OptionConfiguration_issuetype[fieldconfig]:
+                self.scheme_ids['IssueType'].add(issuetype)
 
     def process(self, input, output):
         process_xml(self.filter, input, output, count_total=self.element_count)
