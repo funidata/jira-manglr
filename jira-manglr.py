@@ -506,6 +506,9 @@ class EntityMangler:
         elif e.tag == 'OptionConfiguration' and e.get('fieldid') == 'issuetype': # TODO: customfields?
             return filter_attr_set(e, {'fieldconfig': self.scheme_ids['FieldConfiguration']})
 
+        elif e.tag == 'IssueType':
+            return filter_attr_set(e, {'id': self.scheme_ids['IssueType']})
+
         else:
             return e
 
