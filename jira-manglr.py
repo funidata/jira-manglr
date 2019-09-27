@@ -193,6 +193,7 @@ def filter_attr_glob(e, attr, globs):
 
 class EntityMangler:
     DEFAULT_PERMISSON_SCHEME = "0"
+    DEFAULT_FIELDSCREEN_IDS = {'1', '2', '3'}
 
     def __init__(self, keep_project_users=None, keep_users=None, drop_users=None, rewrite_users=None, keep_groups=None, modify_users=None, rewrite_directories=None, drop_osproperty=None, rewrite_osproperty=None):
         self.element_count = 0
@@ -204,6 +205,7 @@ class EntityMangler:
         self.osproperties = {}
         self.scheme_ids = collections.defaultdict(set)
         self.scheme_ids['PermissionScheme'].add(self.DEFAULT_PERMISSON_SCHEME)
+        self.scheme_ids['FieldScreen'].update(self.DEFAULT_FIELDSCREEN_IDS)
         self.workflows = set()
 
         self.keep_project_users = keep_project_users
