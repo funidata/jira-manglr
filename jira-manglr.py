@@ -303,6 +303,9 @@ class EntityMangler:
             return None
         elif e.tag in ('OAuthConsumer', 'OAuthServiceProviderConsumer', 'OAuthServiceProviderToken'):
             return None
+        elif e.tag == 'FilterSubscription':
+            # not used
+            return None
         elif e.tag == 'Action':
             return filter_attr_set(e, {},
                 rewrite = {'author': self.rewrite_users, 'updateauthor': self.rewrite_users},
