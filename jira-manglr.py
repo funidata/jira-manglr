@@ -11,19 +11,22 @@ import yaml
 
 import xml.etree.ElementTree as ET
 
+ENCODING = 'UTF-8'
+
 log = logging.getLogger('jira-manglr')
 
 __doc__ = """
 Mangle Jira imports
 """
 
-def split_xml_root(e, default_namespace=None):
+def split_xml_root(e, encoding=ENCODING, default_namespace=None):
     out = io.BytesIO()
 
     # output root element open
     et = ET.ElementTree(e)
     et.write(out,
         short_empty_elements = False,
+        encoding = encoding,
         xml_declaration = True,
         default_namespace = default_namespace,
     )
@@ -65,7 +68,7 @@ def parse_xml(file, count_interval=10000):
             yield e
             e.clear()
 
-def process_xml(filter, input, output, count_interval=10000, count_total=None, default_namespace=None):
+def process_xml(filter, input, output, count_interval=10000, count_total=None, encoding=ENCODING, default_namespace=None):
     """
         Process all all top-level elements
     """
@@ -93,7 +96,7 @@ def process_xml(filter, input, output, count_interval=10000, count_total=None, d
             root.tail = '\n'
 
             # output root element open
-            root_open, root_close = split_xml_root(root, default_namespace=default_namespace)
+            root_open, root_close = split_xml_root(root, encoding=encoding, default_namespace=default_namespace)
 
             log.debug("ROOT %s => %s + %s", e, root_open, root_close)
 
@@ -124,6 +127,7 @@ def process_xml(filter, input, output, count_interval=10000, count_total=None, d
                 e.tail = '\n\t'
                 et = ET.ElementTree(e)
                 et.write(output,
+                    encoding = encoding,
                     xml_declaration = False,
                     default_namespace = default_namespace,
                 )
