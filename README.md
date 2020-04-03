@@ -1,4 +1,42 @@
-Mangle Jira XML
+Mangle Jira XML import/export files.
+
+## Disclaimers
+
+* NO WARRANTY EXPRESSED OR IMPLIED
+* If this breaks your Jira installation, you get to keep all the pieces
+* No support is provided
+* Only tested on a single use
+
+# Usage
+
+See https://confluence.atlassian.com/adminjiraserver/splitting-jira-applications-938847622.html
+
+1. Clone Jira to new instance (backup/restore)
+2. Delete non-required projects from the cloned Jira
+3. Create an XML export (ZIP) from the cloned Jira with only the desired projects
+4. Unzip the XML files, run the XML files through `jira-manglr`, and zip up the mangled XML files.
+5. Import the mangled ZIP.
+
+# Features
+
+* Rewrite, drop osproperties
+* Rewrite, drop and modify users
+* Rewrite, drop userdirectories
+* Drop groups
+* Clear activeobject tables
+* Drop unused schemas (IssueType, Permission, Notification, IssueSecurity, FieldLayout, Workflow, FieldScreen, FieldConfig)
+
+# Hardcoded assumptions
+
+* Drops all `AuditLog` and related
+* Drops all `MailServer`
+* Drops all `ProjectCategory`
+
+# Limitations
+
+* Group global permissions must be cleaned up manually
+* Unused custom fields must be cleaned up manually
+* Directory sync service must be cleaned up manually
 
 # Config
 
@@ -55,6 +93,12 @@ activeobjects:
 ```
 
 # Example
+
+### Unzip XML export
+
+    unzip jira-export.zip
+
+This should create the `entities.xml` and `activeobjects.xml` files.
 
 ### Invalid XML tokens
 
