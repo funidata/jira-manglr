@@ -29,3 +29,7 @@ XXX: currently gives false positives
 ### Process ActiveObjects
 
     ~/funidata/jira-manglr/jira-manglr.py --verbose --config ~/funidata/jira-manglr/config.yml --input-activeobjects activeobjects.xml --load-state state-v1.json --output-activeobjects activeobjects-v1.xml
+
+### Create importable zip
+
+    v=v1; mkdir -p import-$v && cp entities-$v.xml import-$v/entities.xml && cp activeobjects-$v.xml import-$v/activeobjects.xml && zip -jr import-$v.zip import-$v
