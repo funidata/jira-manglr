@@ -1,5 +1,59 @@
 Mangle Jira XML
 
+# Config
+
+```yaml
+# for --input/output-entities
+entities:
+  # edit osproperties
+  drop_osproperty:
+    - jira.properties/applinks.admin.*
+    - jira.properties/applinks.global.application.ids
+  rewrite_osproperty:
+    jira.properties/jira.title: Jira (Test)
+
+  # move User/Group from directoryId="10100" -> directoryId="1"
+  # keeps the internal (1) Directory, and drops any other Directory
+  rewrite_directories:
+    10100: 1
+
+  # keep users associated with projects (ProjectRoleActor atlassian-user-role-actor)
+  keep_project_users: true
+
+  # drops all unlisted users (combined with keep_project_users and rewrite_users)
+  keep_users:
+    - test@example.com
+
+  # rewrite usernames (including all known references)
+  rewrite_users:
+    foo@exmple.net: foo@example.com
+
+  # modify internal user attributes, e.g. set admin login password to use after importing
+  modify_users:
+    admin:
+      credential: "{PKCS5S2}xxx" # print(passlib.hash.atlassian_pbkdf2_sha1.hash('...'))
+      displayName: Jira Admin
+      emailAddress: jira@example.com
+      firstName: Jira
+      lastName: Admin
+      lowerEmailAddress: jira@example.com
+      lowerDisplayName: jira admin
+      lowerFirstName: jira
+      lowerLastName: admin
+      lowerUserName: admin
+
+  # drops all unlisted groups
+  keep_groups:
+    - jira-administrators
+    - jira-developers
+    - jira-users
+
+# for --input/output-activeobjects
+activeobjects:
+  clear_tables:
+    - AO_2C4E5C_* # MAIL
+```
+
 # Example
 
 ### Invalid XML tokens
